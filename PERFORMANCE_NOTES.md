@@ -13,11 +13,11 @@ This branch adds six source changes to the WPS 4.7.0 baseline and a job-local me
 
 ## Promoted metgrid interpolation fast path
 
-Metgrid uses a symlink to geogrid/src/interp_module.F; the fast path is included in this shared module and applies to both stages when rebuilt. Prior stage timing/science evidence covers Metgrid; Geogrid acceptance with this addition remains pending.
+Metgrid uses a symlink to geogrid/src/interp_module.F; the fast path is included in this shared module and applies to both stages when rebuilt. Prior speedup evidence covers Metgrid. Fresh next-round exact acceptance now covers both rebuilt stages in the combined configuration.
 
 The promoted interp_module.F is byte-identical to the prior tested candidate (SHA256 97d7e2edcdaabc64cad379173591fe9eac9e7c5bc1a343e8913db602bd1dd765). Its actual-source oracle passed 900,000 comparisons in each of GNU, AOCC and Intel. The cases cover signed coordinates, threshold and boundary cases, missing/zero/negative-zero/tiny/NaN values, optional masks and fallback sequences. Prior three-time stage products passed exact checks against their control, which also passed against the scientific reference.
 
-Four representative kernel configurations improved 1.17–1.25x. One short stage pair measured 193.61 to 190.27 seconds (1.73% less wall); that single pair does not establish a repeatable stage percentage. The original oned calls and their expression order are retained, with no fast-math, contraction or threading changes. Promotion reuses the previously tested source without a new build or model run. Combined validation with the other newly promoted additions remains pending.
+Four representative kernel configurations improved 1.17–1.25x. One short stage pair measured 193.61 to 190.27 seconds (1.73% less wall); that single pair does not establish a repeatable stage percentage. The original oned calls and their expression order are retained, with no fast-math, contraction or threading changes. Promotion originally reused the tested source without new runs. The subsequent isolated build at `9e0ae2a` passes seven-product short qualification and 28 products from four matched timing pipelines; see OPTIMIZATION_FINDINGS.md for scope and longer-window status.
 
 The consolidated findings and proposed next steps are in OPTIMIZATION_FINDINGS.md.
 
@@ -35,7 +35,7 @@ The dependency is official zlib-ng2.3.3, commit12731092979c6d07f42da27da673a9f6c
 
 Five prior16-rank stage pairs reduced wall14.7–22.1% (median17.7%), median CPU19.8%, with0.23% larger files; all12 outputs were exact. Two fixed16-core pipeline pairs showed2.6–11.1% additional wall reduction in the concurrent layout; all42 products passed. Those pipelines excluded the newly promoted geogrid reader and OpenMP default.
 
-The source/build integration, four-thread default and dependency launcher were promoted without a new build or test run at the user's request. Combined validation of all additions is pending.
+These additions were initially promoted without new runs at the user's request. The fresh next-round build exposed recursive-make flag overrides; `9e0ae2a` uses override appends to retain OpenMP flags in the main object and link. Runtime four-thread placement and complete combined short products now pass. Longer-window and downstream statuses are recorded in OPTIMIZATION_FINDINGS.md.
 
 ## Ungrib OpenMP build and runtime
 

@@ -6,7 +6,7 @@ Updated 11 October 2026. This is the consolidated report; it supersedes older ca
 
 The private WPS fork now includes six source improvements, a four-thread Ungrib default, and a launcher selecting compatible zlib-ng for Metgrid. The strongest measured improvements are concurrent processing of independent valid times and lossless output compression. Several source changes accelerate isolated kernels without a large or repeatable whole-stage gain.
 
-The new Metgrid interior interpolation fast path is included by user direction. Its source exactly matches the previously tested candidate. No new builds, model runs or scientific tests were launched for this promotion. The combined configuration containing all recent promotions has not yet been validated; historical timings below apply to the configurations actually measured.
+The combined configuration now passes fresh short integration, including both rebuilt users of the shared interpolation source. All seven qualification products and all 28 products from four matched timing runs pass the pinned exact science and output-layout checks. The fresh 25-time pipeline also passes all 51 products. Three-hour cadence and native 49-time coverage remain in progress; a two-minute full-grid forecast resource probe completed. Historical timings below retain their original configuration scope.
 
 Production `/pool/wrf/WPS` remains a read-only reference. No production source or original scientific checker has been changed.
 
@@ -14,9 +14,9 @@ Production `/pool/wrf/WPS` remains a read-only reference. No production source o
 
 - WPS: the user's private fork, WPS 4.7.0; starting commit `5feccecd63384381b6942371c7a837f66e4ccb84`.
 - WRF: the user's chosen WRF 4.8.0 fork and retained experimental I/O libraries.
-- Retained three-change WPS control: `bb0d14c58f4bbb067cf53143fad90df6284c0353`. Geogrid SIMD, Ungrib OpenMP/default and zlib-ng launcher were added in `7aac02d`; interpolation is added with this report.
+- Retained three-change WPS control: `bb0d14c58f4bbb067cf53143fad90df6284c0353`. Geogrid SIMD, Ungrib OpenMP/default and zlib-ng launcher were added in `7aac02d`; interpolation was added in `086c518`; `9e0ae2a` fixes recursive-make flag overrides so the rebuilt Ungrib main program and link retain OpenMP support.
 - Main short fixture: native 0.25-degree GFS, 15 March 2026 00 UTC cycle, valid times 00/06/12 UTC; one 1500 × 1140 Lambert domain at 2.5 km spacing. A complete pipeline produces seven products: one geography, three intermediate and three Metgrid files.
-- Latest experiments ran only on hpc01: dual EPYC 7742, 128 physical cores, eight NUMA nodes and approximately 125 GiB RAM. Earlier hpc02–04 results are retained historical evidence.
+- The next round uses hpc01–04 under the owner's later authorization. Each node has dual EPYC 7742 CPUs, 128 physical cores, eight NUMA nodes and approximately 125 GiB RAM. hpc00 remains the gateway; concurrent node work and shared NFS load are declared.
 - GNU 13.3, AOCC 5.2 and Intel 2025.3 participate in relevant original-versus-candidate kernel checks. These checks do not establish cross-compiler bitwise equality or approve numerical tolerances.
 - Strict floating-point behavior is retained: no fast math, reassociation or contraction relaxation. Scientific checks compare complete field inventory, values, types, dimensions and metadata; dependency trials also check HDF5 chunk/filter settings.
 - Timings use explicit physical-core placement and bounded cgroups. Shared cache/storage/load variation remains possible. MPI core binding exposes both SMT siblings of a physical core; that is not an independently measured SMT speedup.
@@ -34,7 +34,7 @@ Production `/pool/wrf/WPS` remains a read-only reference. No production source o
 | Metgrid interior sixteen-point interpolation | Gathers an eligible unmasked interior stencil without repeated clipping/mask dispatch; retains original oned arithmetic and fallbacks | 900,000 exact comparisons per compiler family; 1.17–1.25× kernel gain; stage 193.61 → 190.27 s, exact outputs | Included now; 1.73% stage reduction is one pair, not a reliable general percentage |
 | Metgrid zlib-ng selection | Job-local compatible zlib-ng 2.3.3, retaining shuffle, chunks and compression level 2 | Five stage pairs: 14.7–22.1% less wall, median 17.7%; median CPU 19.8% lower; all 12 outputs exact | Strongest repeatedly measured dependency gain; files approximately 0.23% larger |
 
-WPS shares this module: `metgrid/src/interp_module.F` is a symlink to `geogrid/src/interp_module.F`. The change preserves that structure and therefore applies to both stages when rebuilt. Existing exact kernel checks exercise the shared implementation, but the prior stage-speedup evidence covers Metgrid. Geogrid stage acceptance with this interpolation change is part of the pending combined check.
+WPS shares this module: `metgrid/src/interp_module.F` is a symlink to `geogrid/src/interp_module.F`. The change preserves that structure and therefore applies to both stages when rebuilt. Existing exact kernel checks exercise the shared implementation, but the prior stage-speedup evidence covers Metgrid. Fresh combined acceptance now covers both Geogrid and Metgrid with this shared change; longer-window acceptance is separate.
 
 The interpolation source SHA256 is `97d7e2edcdaabc64cad379173591fe9eac9e7c5bc1a343e8913db602bd1dd765`. Its oracle covers signed coordinates, integer thresholds, edges/corners, missing values, zeros, negative zeros, tiny values, NaNs, optional masks and fallback sequences. The original five oned calls preserve per-point arithmetic order. This is a scalar fast path, not a newly vectorized interpolation algorithm.
 
@@ -68,13 +68,44 @@ Controlled spatial MPI stage medians, with serial worker threads:
 
 All 18 stage-screen products passed exact checks. Wider MPI teams reduced individual latency but scaled inefficiently: at 16 ranks, speedup was only 2.02× for Geogrid and 1.71× for Metgrid. Independent valid-time workers therefore offer better measured throughput at the tested budget. A historical 48-core cluster run finished in 89.75 seconds; it is not comparable to the fixed-16-core result.
 
+## Next-round combined qualification and performance
+
+The isolated build matches all 1,447 tracked files/symlinks at `9e0ae2a`. Both interpolation consumer objects were rebuilt. The initial build exposed ordinary Makefile appends being overridden by recursive-make command-line flags; the repair uses override appends for the Ungrib main object and link. The failed build is preserved, and protected executables remain unchanged.
+
+Four fresh short pipelines ran on hpc01 with the same 16-physical-core budget, native inputs, output settings and job-local zlib-ng. The retained three-change control used explicitly serial Ungrib; the combined candidate used the verified four-thread default with disjoint four-core bindings. Geography overlapped three Ungrib workers; three four-rank Metgrid workers followed, leaving four cores unused during that phase.
+
+| Order | Configuration | Pipeline wall seconds | Cgroup CPU seconds |
+|---|---|---:|---:|
+| 1 | Retained control | 151.174 | 1100.003 |
+| 2 | Combined | 149.934 | 1062.253 |
+| 3 | Combined | 149.835 | 1097.125 |
+| 4 | Retained control | 158.264 | 1092.779 |
+
+Paired wall reductions are 0.82% and 5.33%. Both favor the combined build, but the control spread and concurrent shared-storage work make the magnitude provisional. This check establishes no material regression; it does not support adding individual optimization percentages. All seven-product pipelines were 5,407,188,985 bytes. Download and full scientific-comparison time are excluded from these pipeline clocks. The existing runner includes its between-stage header/envelope integrity scan; this is shared by both arms and is not a model-only stage clock. All 28 products passed full pinned science and NetCDF chunk/filter checks; byte reuse was allowed only after an independently completed exact comparison.
+
+The fresh full-grid, 25-time f000–f144/every-six-hours combined pipeline completed in 972.338 seconds, using 8,404.745 cgroup CPU seconds and producing 43,663,035,586 bytes across 51 WPS products. Its outer service duration was 1,123.495 seconds including input/preflight checks; these endpoints differ. The runner reported a 63,844,339,712-byte cgroup peak including cache and preflight pages; this is not process RSS. Native 49-time runs will defer duplicate intermediate parsing to the independent scientific gate, so their model-clock endpoint must be distinguished from this earlier audited pipeline clock. All 51 products now pass full pinned scientific and NetCDF layout checks. This is coverage evidence, not a matched production-speedup result, and it is not the native 49-time window.
+
+Fresh baseline and combined WRF 4.8 `real.exe` runs independently passed the original short reference checks. Their initialization/boundary outputs are also byte-identical. Model walls were 254.75 and 280.61 seconds; no downstream speedup is claimed. The first two-minute forecast memory probe stopped at a missing forecast-only table alias before time stepping, without OOM. A fresh probe restored the required alias to the already frozen WRF table, preserving physics and resources. It completed in 531.31 seconds, reached approximately 00:02:05 with normal adaptive-step overshoot, and peaked at 70.284 GiB cgroup memory without OOM. It produced the initial full-grid history file with 275 variables. This is execution/resource coverage only: no forecast scientific reference was frozen, and six-hour qualification remains pending.
+
+Native f003/f009 were downloaded and fully decoded into a separate five-time, three-hour fixture without changing the original fixture. Two retained-control pipelines completed in 269.211 and 232.659 seconds; their independent reference comparison is running. Remaining odd-three-hour inputs are being acquired for a separate native 49-time case. Input acquisition time is excluded from model timings.
+
+## Selected-path source decisions
+
+The qualified combined four-rank Metgrid path with zlib-ng was profiled on hpc02. The ordinary/NC+PMPI pair was 57.906/64.365 seconds: an 11.16% single-pair instrumentation difference, not an optimization result. Both products passed exact checks. A separate coarse source ledger also passed exact output checks; its ordinary/ledger walls of 62.206/58.423 seconds reflect load variation and do not demonstrate negative instrumentation overhead.
+
+The ledger measured rank-0 backend writes at 26.756 seconds, complete gathers at 4.230, interpolation at 10.684, main field reads at 5.845, output packing at 0.261, allocation at 0.000704 and free at 0.377. Inclusive phases and rank waits are not additive. This makes allocation caching a poor next target: even eliminating allocation/free cannot save much of the stage. A narrower candidate is avoiding payload gathers during NetCDF precommit training, where the actual retained WRF backend does not read the data argument. Actual data writes and other backends retain their original path; this candidate is under caller/oracle review, not included.
+
+A standalone input-sharing probe used the actual qualified reader objects and all 197 fields (818,133,120 logical slab bytes per rank). Explicit typed headers and contiguous slabs produced eight byte-identical complete streams across four ranks and the two read layouts. Independent/shared read-and-distribute times were 5.546/5.524 seconds; the reversed pair without correctness snapshot writes was 5.661/5.661 seconds. Sharing was effectively flat at this budget, so application integration is stopped for this round. This does not qualify malformed-input behavior or claim lower physical NFS traffic.
+
+Geogrid's bounded integer initialization interchange passed 336 actual-source cases and improved large-array caller time about 2.04–2.14×. The approved DeepSeek implementation independently matched the locally validated transformation. Stage contribution remains unmeasured; the change is not promoted. No categorical REAL accumulation was reordered.
+
 ## Bottlenecks identified
 
 One instrumented 16-rank Metgrid run recorded rank 0 spending 32.83 seconds in 88 float output writes and 5.84 seconds in 51 float reads, within 60.67 seconds rank runtime. Output is NetCDF4/HDF5 with shuffle and zlib level 2. This identifies output as a leading critical-path cost, but does not attribute every write second to compression.
 
 Other ranks spent long periods in MPI sends/broadcasts while root performed serial work. These are partly waiting/imbalance costs, not evidence that IB is slow. Aggregate instruction counters include polling and cannot establish useful interpolation throughput.
 
-Every rank independently materializes full meteorological slabs: approximately 818 MB logical payload per valid time, or roughly 13.1 GB requested by 16 ranks before extra copies. Filesystem caches can greatly reduce physical traffic. Sharing materialization is promising, but its benefit is unmeasured.
+Every rank independently materializes full meteorological slabs: approximately 818 MB logical payload per valid time, or roughly 13.1 GB requested by 16 ranks before extra copies. Filesystem caches can greatly reduce physical traffic. This motivated the next-round actual-reader probe above; its four-rank cached result was flat, so sharing is held.
 
 A 15-second compute-phase sample attributed about 39% of sampled cycles to sixteen-point interpolation and 14% to oned. Those are windowed samples, not whole-stage time fractions. Exact point batching is a concrete next arithmetic target after output work.
 
@@ -95,11 +126,11 @@ AOCC and Intel remain eligible experimental compiler stacks. Their per-compiler 
 
 ## Proposed next steps
 
-### 1. One combined integration check when testing resumes
+### 1. Finish coverage and downstream validation
 
-Build the promoted branch in a separate project build, then run one fresh short pipeline against the existing pinned reference. This addresses interactions/build wiring among the recent promotions; do not rerun broad compiler, rank or thread matrices. If exact science passes, use a small number of paired pipeline measurements to check for a material regression. No such run was launched as part of this promotion.
+Fresh short combined integration and the four-run exact timing gate are complete. Finish the 25-time check, freeze the three-hour cadence reference and validate the combined cadence pipeline. Attempt the native 49-time case after its complete inputs and reference are available. Keep the full target grid and separate model, download, check and downstream clocks.
 
-For a 16-core concurrent prerequisite phase, allocate four Geogrid ranks plus three four-thread Ungrib processes on disjoint physical cores. After prerequisites finish, run three four-rank Metgrid time workers. Explicitly bind/count each Ungrib team; simply inheriting old one-core worker placement would oversubscribe it. Preserve native IB/UCX and bounded memory/I/O concurrency.
+The two-minute forecast resource probe is complete. Subsequent steps took roughly 22–24 seconds as adaptive dt increased from 10.5 to 15.51 seconds; a six-hour forecast is deferred to keep this round WPS-first. Missing forecast inputs or resource limits remain explicit coverage gaps; successful real initialization does not replace forecast execution.
 
 ### 2. Launch three bounded source investigations in parallel
 
@@ -111,7 +142,7 @@ Use existing Codex component agents for ownership and review, with bounded DeepS
 | Geogrid | Interchange only the two independent integer initialization nests to make dimension 1 contiguous | Actual-source oracle for bounds/guards/untouched plane and odd/negative/empty ranges; cheap alternating timings | Flat kernel or negligible contribution; do not reorder categorical REAL accumulation |
 | Ungrib | Profile complete-caller time and decoded-value/byte-weighted width/alignment eligibility | Small instrumented replay of representative complex-packing fields, then at most one eligible integer AVX2 decoder prototype | No substantial eligible time share, overread/exactness failure, or complete-caller regression |
 
-Avoid repeating the rejected portable block or PEXT experiments unchanged. Workers use bounded contracts, denied tool access and a 240-second implementation limit; allow at most one targeted repair before root review. Current project compute remains restricted to hpc01; hpc00 is the gateway and old hpc02–04 runs remain evidence only.
+Avoid repeating the rejected portable block or PEXT experiments unchanged. Workers use bounded contracts, denied tool access and a 240-second implementation limit; allow at most one targeted repair before root review. Current testing is authorized on hpc01–04; hpc00 remains the gateway. Root centrally schedules node cores, memory and shared-storage concurrency.
 
 ### 3. Follow Metgrid evidence with input sharing and exact point batches
 

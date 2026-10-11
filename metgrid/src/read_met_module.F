@@ -9,17 +9,21 @@ module read_met_module
    integer :: input_unit
    character (len=MAX_FILENAME_LEN) :: filename
  
+   logical :: file_payload_sizes_checked = .false.
+   logical :: file_payload_sizes_validated = .false.
+
    contains
  
    !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
    ! Name: read_met_init
    !
    !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-   subroutine read_met_init(fg_source, source_is_constant, datestr, istatus)
+   subroutine read_met_init(fg_source, source_is_constant, datestr, istatus, audit_for_selection)
  
       implicit none
   
       ! Arguments
+      logical, optional, intent(in) :: audit_for_selection
       integer, intent(out) :: istatus
       logical, intent(in) :: source_is_constant
       character (len=*), intent(in) :: fg_source
@@ -30,6 +34,8 @@ module read_met_module
       logical :: is_used
 
       istatus = 0
+      file_payload_sizes_checked = .false.
+      file_payload_sizes_validated = .false.
     
       !  1) BUILD FILENAME BASED ON TIME 
       filename = ' '
@@ -39,6 +45,15 @@ module read_met_module
          write(filename, '(a)') trim(fg_source)
       end if
   
+      ! The stream audit must precede sequential OPEN for runtimes that
+      ! prohibit two units connected to the same file (including AOCC).
+      if (present(audit_for_selection)) then
+         if (audit_for_selection) then
+            file_payload_sizes_validated = audit_intermediate_payload_sizes(filename)
+            file_payload_sizes_checked = .true.
+         end if
+      end if
+
       !  2) OPEN FILE
       do input_unit=10,100
          inquire(unit=input_unit, opened=is_used)
@@ -59,11 +74,13 @@ module read_met_module
    ! Name: read_next_met_field
    !
    !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-   subroutine read_next_met_field(fg_data, istatus)
+   subroutine read_next_met_field(fg_data, istatus, selected_fields)
  
       implicit none
   
       ! Arguments
+      character(len=*), dimension(:), optional, intent(in) :: selected_fields
+      logical :: do_skip
       type (met_data), intent(inout) :: fg_data
       integer, intent(out) :: istatus
   
@@ -72,6 +89,13 @@ module read_met_module
   
       istatus = 1
   
+      if (present(selected_fields)) then
+         if (.not. file_payload_sizes_checked) then
+            file_payload_sizes_validated = audit_intermediate_payload_sizes(filename)
+            file_payload_sizes_checked = .true.
+         end if
+      end if
+
       !  1) READ FORMAT VERSION
       read(unit=input_unit,err=1001,end=1001) fg_data % version
   
@@ -156,8 +180,19 @@ module read_met_module
      
          fg_data % is_wind_grid_rel = .true.
      
-         allocate(fg_data % slab(fg_data % nx, fg_data % ny))
-         read(unit=input_unit,err=1001,end=1001) fg_data % slab
+         do_skip = .false.
+         if (present(selected_fields)) then
+            if (file_payload_sizes_validated) then
+               do_skip = .not. any(selected_fields == fg_data % field)
+            end if
+         end if
+         if (do_skip) then
+            allocate(fg_data % slab(0, 0))
+            read(unit=input_unit,err=1001,end=1001)
+         else
+            allocate(fg_data % slab(fg_data % nx, fg_data % ny))
+            read(unit=input_unit,err=1001,end=1001) fg_data % slab
+         end if
      
          istatus = 0 
     
@@ -250,8 +285,19 @@ module read_met_module
          
          fg_data % is_wind_grid_rel = .true.
       
-         allocate(fg_data % slab(fg_data % nx, fg_data % ny))
-         read(unit=input_unit,err=1001,end=1001) fg_data % slab
+         do_skip = .false.
+         if (present(selected_fields)) then
+            if (file_payload_sizes_validated) then
+               do_skip = .not. any(selected_fields == fg_data % field)
+            end if
+         end if
+         if (do_skip) then
+            allocate(fg_data % slab(0, 0))
+            read(unit=input_unit,err=1001,end=1001)
+         else
+            allocate(fg_data % slab(fg_data % nx, fg_data % ny))
+            read(unit=input_unit,err=1001,end=1001) fg_data % slab
+         end if
       
          istatus = 0
 
@@ -380,8 +426,19 @@ module read_met_module
  
          read(unit=input_unit,err=1001,end=1001) fg_data % is_wind_grid_rel
       
-         allocate(fg_data % slab(fg_data % nx, fg_data % ny))
-         read(unit=input_unit,err=1001,end=1001) fg_data % slab
+         do_skip = .false.
+         if (present(selected_fields)) then
+            if (file_payload_sizes_validated) then
+               do_skip = .not. any(selected_fields == fg_data % field)
+            end if
+         end if
+         if (do_skip) then
+            allocate(fg_data % slab(0, 0))
+            read(unit=input_unit,err=1001,end=1001)
+         else
+            allocate(fg_data % slab(fg_data % nx, fg_data % ny))
+            read(unit=input_unit,err=1001,end=1001) fg_data % slab
+         end if
       
          istatus = 0
 
@@ -408,7 +465,162 @@ module read_met_module
   
       close(unit=input_unit)
       filename = 'UNINITIALIZED_FILENAME'
+      file_payload_sizes_checked = .false.
+      file_payload_sizes_validated = .false.
   
    end subroutine read_met_close
+
+! Codex local implementation: worker audit rejected; no defective helper reused.
+   logical function audit_intermediate_payload_sizes(audit_filename)
+      use iso_fortran_env, only: int32, int64
+      implicit none
+      character(len=*), intent(in) :: audit_filename
+      integer :: u, ios, close_status
+      integer(int32) :: version, nx, ny, iproj
+      integer(int64) :: file_bytes, cursor, payload_start, record_bytes
+      integer(int64) :: header_offset, projection_min, slab_bytes
+      character(len=8) :: startloc
+      logical :: ok, saw_field
+
+      audit_intermediate_payload_sizes = .false.
+      if (storage_size(0.) /= 32 .or. bit_size(0) /= 32) return
+      if (storage_size(.false.) /= 32) return
+      open(newunit=u, file=audit_filename, form='unformatted', access='stream', &
+           status='old', action='read', iostat=ios)
+      if (ios /= 0) return
+      file_bytes = -1_int64
+      inquire(unit=u, size=file_bytes, iostat=ios)
+      if (ios /= 0 .or. file_bytes < 0_int64) then
+         close(u, iostat=close_status)
+         return
+      end if
+      cursor = 0_int64
+      saw_field = .false.
+      ok = .true.
+      do while (cursor < file_bytes)
+         call envelope(payload_start, record_bytes)
+         if (.not. ok) exit
+         if (record_bytes < 4_int64) then
+            ok = .false.; exit
+         end if
+         read(u, pos=payload_start+1_int64, iostat=ios) version
+         if (ios /= 0) then
+            ok = .false.; exit
+         end if
+         select case(version)
+         case(3); header_offset = 112_int64
+         case(4,5); header_offset = 144_int64
+         case default; ok = .false.; exit
+         end select
+         call envelope(payload_start, record_bytes)
+         if (.not. ok) exit
+         if (record_bytes < header_offset+12_int64) then
+            ok = .false.; exit
+         end if
+         read(u, pos=payload_start+header_offset+1_int64, iostat=ios) nx, ny, iproj
+         if (ios /= 0) then
+            ok = .false.; exit
+         end if
+         if (nx <= 0 .or. ny <= 0) then
+            ok = .false.; exit
+         end if
+         if (int(nx,int64) > huge(0_int64)/(4_int64*int(ny,int64))) then
+            ok = .false.; exit
+         end if
+         slab_bytes = 4_int64*int(nx,int64)*int(ny,int64)
+         projection_min = -1_int64
+         select case(version)
+         case(3)
+            select case(iproj)
+            case(0); projection_min = 16_int64
+            case(1); projection_min = 20_int64
+            case(3); projection_min = 28_int64
+            case(5); projection_min = 24_int64
+            end select
+         case(4)
+            select case(iproj)
+            case(0); projection_min = 24_int64
+            case(1); projection_min = 28_int64
+            case(3); projection_min = 36_int64
+            case(5); projection_min = 32_int64
+            end select
+         case(5)
+            select case(iproj)
+            case(0,4); projection_min = 28_int64
+            case(1); projection_min = 32_int64
+            case(3); projection_min = 40_int64
+            case(5,6); projection_min = 36_int64
+            end select
+         end select
+         if (projection_min < 0_int64) then
+            ok = .false.; exit
+         end if
+         call envelope(payload_start, record_bytes)
+         if (.not. ok) exit
+         if (record_bytes < projection_min) then
+            ok = .false.; exit
+         end if
+         if (version >= 4) then
+            read(u, pos=payload_start+1_int64, iostat=ios) startloc
+            if (ios /= 0) then
+               ok = .false.; exit
+            end if
+            if (startloc /= 'SWCORNER' .and. startloc /= 'CENTER  ') then
+               ok = .false.; exit
+            end if
+         end if
+         if (version == 5) then
+            call envelope(payload_start, record_bytes)
+            if (.not. ok) exit
+            if (record_bytes < 4_int64) then
+               ok = .false.; exit
+            end if
+         end if
+         call envelope(payload_start, record_bytes)
+         if (.not. ok) exit
+         if (record_bytes < slab_bytes) then
+            ok = .false.; exit
+         end if
+         saw_field = .true.
+      end do
+      audit_intermediate_payload_sizes = ok .and. cursor == file_bytes .and. saw_field
+      close(u, iostat=close_status)
+      if (close_status /= 0) audit_intermediate_payload_sizes = .false.
+
+   contains
+      subroutine envelope(body_start, bytes)
+         integer(int64), intent(out) :: body_start, bytes
+         integer(int32) :: leading, trailing
+         integer :: status
+         body_start = 0_int64; bytes = 0_int64
+         if (.not. ok) return
+         if (cursor < 0_int64 .or. cursor > file_bytes) then
+            ok = .false.; return
+         end if
+         if (file_bytes-cursor < 8_int64) then
+            ok = .false.; return
+         end if
+         read(u, pos=cursor+1_int64, iostat=status) leading
+         if (status /= 0) then
+            ok = .false.; return
+         end if
+         if (leading < 0_int32) then
+            ok = .false.; return
+         end if
+         bytes = int(leading,int64)
+         if (bytes > file_bytes-cursor-8_int64) then
+            ok = .false.; return
+         end if
+         read(u, pos=cursor+bytes+5_int64, iostat=status) trailing
+         if (status /= 0) then
+            ok = .false.; return
+         end if
+         if (trailing /= leading) then
+            ok = .false.; return
+         end if
+         body_start = cursor+4_int64
+         cursor = cursor+bytes+8_int64
+      end subroutine envelope
+   end function audit_intermediate_payload_sizes
 
 end module read_met_module

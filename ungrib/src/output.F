@@ -32,6 +32,7 @@ subroutine output(hdate, nlvl, maxlvl, plvl, interval, iflag, out_format, prefix
   integer :: iunit = 13
 
   real, pointer, dimension(:,:) :: scr2d
+  real, pointer, contiguous, dimension(:,:) :: scr2d_c
 
   integer :: maxlvl
   integer nlvl, debug_level
@@ -216,7 +217,13 @@ subroutine output(hdate, nlvl, maxlvl, plvl, interval, iflag, out_format, prefix
                  call mprintf(.true.,ERROR, &
                 "Unrecognized map%%igrid: %i in subroutine output 1",i1=map%igrid)
               endif
-              write (iunit) scr2d
+	      if (is_contiguous(scr2d)) then
+		 scr2d_c => scr2d
+		 write (iunit) scr2d_c(:,:)
+		 nullify(scr2d_c)
+	      else
+		 write (iunit) scr2d
+	      endif
 	    else if (out_format(1:2) .eq. 'WP') then   
                 call mprintf(.true.,DEBUG, &
          "writing in WPS format  iunit = %i, map%%igrid = %i",i1=iunit,i2=map%igrid)
@@ -244,7 +251,13 @@ subroutine output(hdate, nlvl, maxlvl, plvl, interval, iflag, out_format, prefix
                 "Unrecognized map%%igrid: %i in subroutine output 1",i1=map%igrid)
               endif
 	      write (iunit) map%grid_wind
-              write (iunit) scr2d
+	      if (is_contiguous(scr2d)) then
+		 scr2d_c => scr2d
+		 write (iunit) scr2d_c(:,:)
+		 nullify(scr2d_c)
+	      else
+		 write (iunit) scr2d
+	      endif
 	    else if (out_format(1:2) .eq. 'MM') then
 !MGD              if ( debug_level .gt. 100 ) then
 !MGD	         write(6,*) 'writing in MM5 format'
@@ -273,7 +286,13 @@ subroutine output(hdate, nlvl, maxlvl, plvl, interval, iflag, out_format, prefix
                  call mprintf(.true.,ERROR, &
                 "Unrecognized map%%igrid: %i in subroutine output 1",i1=map%igrid)
               endif
-              write (iunit) scr2d
+	      if (is_contiguous(scr2d)) then
+		 scr2d_c => scr2d
+		 write (iunit) scr2d_c(:,:)
+		 nullify(scr2d_c)
+	      else
+		 write (iunit) scr2d
+	      endif
 	    endif
               if ( debug_level .gt. 100 ) then
 	        call mprintf(.true.,DEBUG, &

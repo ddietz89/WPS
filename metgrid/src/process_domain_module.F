@@ -2074,17 +2074,48 @@ integer, parameter :: BDR_WIDTH = 3
 integer, parameter :: BDR_WIDTH = 3
 
       ! Local variables
-      integer :: i, istatus, idx, idxt
+      integer :: i, istatus, idx, idxt, j, n_wanted
+      character(len=9), allocatable :: wanted_fields(:)
+      logical :: can_select
       type (fg_input) :: mask_field
       type (met_data) :: fg_data
 
+      ! Conservative union: retain every raw mask name and every table alias
+      ! that could rename a raw field to a mask, regardless of source priority.
+      ! A default-entry rename can apply to arbitrary names; keep full reads.
+      can_select = (output_name(num_entries) == ' ')
+      allocate(wanted_fields(2*num_entries))
+      n_wanted = 0
+      do i=1,num_entries
+         if (interp_mask(i) /= ' ') then
+            n_wanted = n_wanted+1
+            wanted_fields(n_wanted) = interp_mask(i)(1:9)
+         end if
+      end do
+      do i=1,num_entries
+         if (output_name(i) /= ' ') then
+            do j=1,num_entries
+               if (interp_mask(j) /= ' ' .and. &
+                   trim(output_name(i)(1:9)) == trim(interp_mask(j))) then
+                  n_wanted = n_wanted+1
+                  wanted_fields(n_wanted) = fieldname(i)(1:9)
+                  exit
+               end if
+            end do
+         end if
+      end do
+
       istatus = 0
 
-      call read_met_init(fg_prefix, is_constants, fg_date, istatus)
+      call read_met_init(fg_prefix, is_constants, fg_date, istatus, can_select)
 
       do while (istatus == 0)
    
-         call read_next_met_field(fg_data, istatus)
+         if (can_select) then
+            call read_next_met_field(fg_data, istatus, wanted_fields(1:n_wanted))
+         else
+            call read_next_met_field(fg_data, istatus)
+         end if
 
          if (istatus == 0) then
 
@@ -2193,6 +2224,7 @@ integer, parameter :: BDR_WIDTH = 3
       end do
 
       call read_met_close()
+      deallocate(wanted_fields)
 
    end subroutine get_interp_masks
 

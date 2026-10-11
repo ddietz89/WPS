@@ -28,6 +28,42 @@ C
       integer iout(*)
       integer tbit, bitcnt
       integer, parameter :: ones(8) = (/ 1,3,7,15,31,63,127,255 /)
+      integer(kind=8) :: rval, rpos, rlim
+      integer :: rbits, roff, ridx, i
+
+c     fast path: unsigned 64-bit bit reservoir for contiguous fields.
+c     accumulates up to 38 meaningful bits, reads each byte once, and
+c     avoids the per-value divide/mod bit-position arithmetic below.
+      rpos = int(iskip,8)
+      rlim = int(huge(0),8)
+      if (nskip.eq.0 .and. nbyte.ge.1 .and. nbyte.le.31 .and.
+     1    n.ge.2 .and. iskip.ge.0 .and.
+     2    rpos+int(n,8)*int(nbyte,8).le.rlim) then
+
+         ridx = int(rpos/8_8) + 1
+         roff = int(mod(rpos,8_8))
+         rbits = 8 - roff
+         rval = iand(int(mov_a2i(in(ridx)),8),int(ones(rbits),8))
+         ridx = ridx + 1
+
+         do i = 1, n
+            do while (rbits.lt.nbyte)
+               rval = ior(ishft(rval,8),
+     1                    iand(int(mov_a2i(in(ridx)),8),255_8))
+               rbits = rbits + 8
+               ridx = ridx + 1
+            enddo
+            rbits = rbits - nbyte
+            iout(i) = int(ishft(rval,-rbits))
+            if (rbits.gt.0) then
+               rval = iand(rval,ishft(1_8,rbits)-1_8)
+            else
+               rval = 0_8
+            endif
+         enddo
+
+         RETURN
+      endif
 
 c     nbit is the start position of the field in bits
       nbit = iskip

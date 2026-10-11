@@ -1,7 +1,7 @@
 include ../../configure.wps
 include ../../arch/ungrib_openmp.mk
 
-LDFLAGS += $(UNGRIB_OPENMP_FLAGS)
+override LDFLAGS += $(UNGRIB_OPENMP_FLAGS)
 
 LIBTARGET	=	pgu
 EXE		=	ungrib.exe \
@@ -17,7 +17,7 @@ OBJS2		=	build_hdate.o geth_newdate.o geth_idts.o swap.o table.o module_stringut
 
 all:			lib$(LIBTARGET).a $(EXE)
 
-ungrib.o: FFLAGS += $(UNGRIB_OPENMP_FLAGS)
+ungrib.o: override FFLAGS += $(UNGRIB_OPENMP_FLAGS)
 
 ungrib.exe:		$(OBJS1) lib$(LIBTARGET).a
 			$(RM) $@

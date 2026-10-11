@@ -1222,6 +1222,29 @@ module interp_module
       x = xx - i
       y = yy - j
 
+      ! Common interior case: gather the stencil without per-element clipping
+      ! or optional-mask dispatch. Keep the original arithmetic and fallbacks.
+      if (.not. (present(mask_array) .and. present(maskval))) then
+         if (i-1 >= start_x .and. i+2 <= end_x .and. &
+             j-1 >= start_y .and. j+2 <= end_y) then
+            if (abs(x) > 0.0001 .or. abs(y) > 0.0001) then
+               stl = array(i-1:i+2,j-1:j+2,izz)
+               if (msgval /= 0.) then
+                  where (stl == 0.) stl = 1.E-20
+               end if
+               if (.not. any(stl == msgval)) then
+                  a = oned(x,stl(1,1),stl(2,1),stl(3,1),stl(4,1))
+                  b = oned(x,stl(1,2),stl(2,2),stl(3,2),stl(4,2))
+                  c = oned(x,stl(1,3),stl(2,3),stl(3,3),stl(4,3))
+                  d = oned(x,stl(1,4),stl(2,4),stl(3,4),stl(4,4))
+                  sixteen_pt = oned(y,a,b,c,d)
+                  if (sixteen_pt == 1.E-20) sixteen_pt = 0.
+                  return
+               end if
+            end if
+         end if
+      end if
+
       if ( ( abs(x) > 0.0001 ) .or. ( abs(y) > 0.0001 ) ) then
   
          loop_1 : do k = 1,4

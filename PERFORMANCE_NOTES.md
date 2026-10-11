@@ -1,6 +1,6 @@
 # WPS preprocessing optimizations
 
-This branch adds five source changes to the WPS 4.7.0 baseline and a job-local metgrid dependency selection:
+This branch adds six source changes to the WPS 4.7.0 baseline and a job-local metgrid dependency selection:
 
 - Reuse packed bytes and unused bits in a per-call GBYTES reservoir for zero-skip, 1–31-bit extraction. Keep the original byte conversion and generic path for unsupported cases, with overflow guards.
 - Write contiguous ungrib slabs as whole array sections, avoiding scalar runtime transfers while preserving unformatted records. Keep the original path for strided slabs. This uses Fortran 2008 CONTIGUOUS and IS_CONTIGUOUS, checked with the configured GNU, AOCC and Intel compilers.
@@ -8,6 +8,18 @@ This branch adds five source changes to the WPS 4.7.0 baseline and a job-local m
 - Decode eligible independent GRIB2 complex-packing groups with OpenMP, preserving the retained bit reservoir, original arithmetic and serial fallback for missing values or unsupported geometry. Ungrib defaults to four threads when OMP_NUM_THREADS is absent or empty; an explicit setting overrides it.
 
 - Decode eligible geogrid 1-/2-byte tiles with a separate SIMD conversion/scaling helper; retain original rounding, signed thresholds, alias guards and fallback.
+
+- Use the original sixteen-point interpolation arithmetic directly for eligible unmasked interior stencils, avoiding per-element clipping and optional-mask dispatch. Retain the original path for edges, active masks, missing stencils and near-integer points.
+
+## Promoted metgrid interpolation fast path
+
+Metgrid uses a symlink to geogrid/src/interp_module.F; the fast path is included in this shared module and applies to both stages when rebuilt. Prior stage timing/science evidence covers Metgrid; Geogrid acceptance with this addition remains pending.
+
+The promoted interp_module.F is byte-identical to the prior tested candidate (SHA256 97d7e2edcdaabc64cad379173591fe9eac9e7c5bc1a343e8913db602bd1dd765). Its actual-source oracle passed 900,000 comparisons in each of GNU, AOCC and Intel. The cases cover signed coordinates, threshold and boundary cases, missing/zero/negative-zero/tiny/NaN values, optional masks and fallback sequences. Prior three-time stage products passed exact checks against their control, which also passed against the scientific reference.
+
+Four representative kernel configurations improved 1.17–1.25x. One short stage pair measured 193.61 to 190.27 seconds (1.73% less wall); that single pair does not establish a repeatable stage percentage. The original oned calls and their expression order are retained, with no fast-math, contraction or threading changes. Promotion reuses the previously tested source without a new build or model run. Combined validation with the other newly promoted additions remains pending.
+
+The consolidated findings and proposed next steps are in OPTIMIZATION_FINDINGS.md.
 
 ## Promoted geogrid SIMD reader
 

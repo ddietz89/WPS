@@ -6,6 +6,9 @@
 !   the WRF I/O API.
 !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
 module output_module
+#if defined(WPS_CHUNK_MPI) && defined(IO_NETCDF) && defined(_MPI) && !defined(_GEOGRID)
+   use iso_c_binding, only: c_ptr, c_int, c_char, c_null_ptr, c_null_char, c_associated
+#endif
 
    use parallel_module
    use gridinfo_module
@@ -40,6 +43,45 @@ module output_module
    ! WRF I/O API related variables
    integer :: handle 
  
+#if defined(WPS_CHUNK_MPI) && defined(IO_NETCDF) && defined(_MPI) && !defined(_GEOGRID)
+   integer(c_int) :: chunk_base_domain(4)
+   interface
+      integer(c_int) function chunk_schema(fcomm,schema,n) bind(C,name="wps_chunk_schema_agree")
+         import c_int
+         integer(c_int),value :: fcomm,n
+         integer(c_int),intent(in) :: schema(*)
+      end function
+      integer(c_int) function chunk_create(fcomm,root,name,eligible,session) bind(C,name="wps_chunk_session_create")
+         import c_int,c_char,c_ptr
+         integer(c_int),value :: fcomm,root,eligible
+         character(kind=c_char),intent(in) :: name(*)
+         type(c_ptr),intent(out) :: session
+      end function
+      integer(c_int) function chunk_workers(session) bind(C,name="wps_chunk_workers")
+         import c_int,c_ptr
+         type(c_ptr),value :: session
+      end function
+      integer(c_int) function chunk_done(session,status) bind(C,name="wps_chunk_done")
+         import c_int,c_ptr
+         type(c_ptr),value :: session
+         integer(c_int),value :: status
+      end function
+      subroutine chunk_destroy(session) bind(C,name="wps_chunk_session_destroy")
+         import c_ptr
+         type(c_ptr),value :: session
+      end subroutine
+      integer(c_int) function chunk_register(session) bind(C,name="wps_chunk_register")
+         import c_int,c_ptr
+         type(c_ptr),value :: session
+      end function
+      integer(c_int) function chunk_proof_write() bind(C,name="wps_chunk_proof_write")
+         import c_int
+      end function
+      integer(c_int) function chunk_unregister() bind(C,name="wps_chunk_unregister")
+         import c_int
+      end function
+   end interface
+#endif
    contains
  
  
@@ -91,6 +133,10 @@ module output_module
       character (len=128) :: output_flag
 #endif
   
+#if defined(WPS_CHUNK_MPI) && defined(IO_NETCDF) && defined(_MPI) && !defined(_GEOGRID)
+      chunk_base_domain=[int(start_dom_1,c_int),int(end_dom_1,c_int), &
+                         int(start_dom_2,c_int),int(end_dom_2,c_int)]
+#endif
       call init_output_fields(nest_number, grid_type, &
                               start_dom_1, end_dom_1, start_dom_2, end_dom_2, &
                               start_patch_1, end_patch_1, start_patch_2, end_patch_2, &
@@ -1083,8 +1129,57 @@ module output_module
       integer, dimension(3) :: sd, ed, sp, ep, sm, em
       real, pointer, dimension(:,:,:) :: real_dom_array
       logical :: allocated_real_locally
+#if defined(WPS_CHUNK_MPI) && defined(IO_NETCDF) && defined(_MPI) && !defined(_GEOGRID)
+      type(c_ptr) :: chunk_session
+      integer(c_int) :: chunk_status, chunk_eligible, chunk_scope_status, chunk_schema_values(14)
+      integer :: chunk_field_index
+      logical :: chunk_field_found, chunk_training
+#endif
   
       allocated_real_locally = .false.
+#if defined(WPS_CHUNK_MPI) && defined(IO_NETCDF) && defined(_MPI) && !defined(_GEOGRID)
+      chunk_session = c_null_ptr
+      istatus = 0
+      chunk_training = .false.
+      if (present(is_training)) chunk_training = is_training
+      if (nprocs>1 .and. io_form_output==NETCDF .and. .not.do_tiled_output .and. .not.chunk_training) then
+         chunk_field_found = .false.
+         chunk_field_index = 0
+         do i=1,NUM_FIELDS
+            if ((index(cname,trim(fields(i)%fieldname))/=0) .and. &
+                (len_trim(cname)==len_trim(fields(i)%fieldname))) then
+               chunk_field_found=.true.
+               chunk_field_index=i
+               exit
+            end if
+         end do
+         chunk_eligible = 0
+         if (chunk_field_found) chunk_eligible=1
+         chunk_status = chunk_create(int(comm,c_int),int(IO_NODE,c_int),trim(cname)//c_null_char, &
+                                     chunk_eligible,chunk_session)
+         call mprintf((chunk_status/=0),ERROR,'Collective compressed output field agreement failed')
+         if (c_associated(chunk_session)) then
+            i=chunk_field_index
+            chunk_schema_values(1)=int(WRF_REAL,c_int)
+            chunk_schema_values(2)=int(fields(i)%ndims,c_int)
+            chunk_schema_values(3:5)=[int(iachar(fields(i)%mem_order(1:1)),c_int), &
+                                     int(iachar(fields(i)%mem_order(2:2)),c_int), &
+                                     int(iachar(fields(i)%mem_order(3:3)),c_int)]
+            chunk_schema_values(6)=int(fields(i)%istagger,c_int)
+            chunk_schema_values(7)=int(fields(i)%sr_x,c_int)
+            chunk_schema_values(8)=int(fields(i)%sr_y,c_int)
+            chunk_schema_values(9:12)=chunk_base_domain
+            chunk_schema_values(13)=int(fields(i)%dom_start(3),c_int)
+            chunk_schema_values(14)=int(fields(i)%dom_end(3),c_int)
+            chunk_status=chunk_schema(int(comm,c_int),chunk_schema_values,14_c_int)
+            if (chunk_status/=0) then
+               call chunk_destroy(chunk_session)
+               chunk_session=c_null_ptr
+               call mprintf(.true.,ERROR,'Collective compressed output field schema mismatch')
+            end if
+         end if
+      end if
+#endif
   
       ! If we are running distributed memory and need to gather all tiles onto a single processor for output
       if (nprocs > 1 .and. .not. do_tiled_output) then
@@ -1126,6 +1221,14 @@ module output_module
          end do
       end if
   
+#if defined(WPS_CHUNK_MPI) && defined(IO_NETCDF) && defined(_MPI) && !defined(_GEOGRID)
+      if (c_associated(chunk_session) .and. my_proc_id/=IO_NODE) then
+         chunk_status = chunk_workers(chunk_session)
+         call chunk_destroy(chunk_session)
+         chunk_session = c_null_ptr
+         call mprintf((chunk_status/=0),ERROR,'Collective compressed output failed')
+      end if
+#endif
       ! Now a write call is only done if each processor writes its own file, or if we are the IO_NODE
       if (my_proc_id == IO_NODE .or. do_tiled_output) then
          comm_1 = 1
@@ -1169,9 +1272,29 @@ module output_module
 #endif
 #ifdef IO_NETCDF
                if (io_form_output == NETCDF) then
+#if defined(WPS_CHUNK_MPI) && defined(IO_NETCDF) && defined(_MPI) && !defined(_GEOGRID)
+                  if (c_associated(chunk_session)) then
+                     chunk_scope_status = chunk_register(chunk_session)
+                     if (chunk_scope_status/=0) then
+                        chunk_status = chunk_done(chunk_session,chunk_scope_status)
+                        call chunk_destroy(chunk_session)
+                        chunk_session = c_null_ptr
+                        call mprintf(.true.,ERROR,'Compressed output provider registration failed')
+                     end if
+                  end if
+#endif
                   call ext_ncd_write_field(handle, datestr, trim(fields(i)%fieldname), &
                        real_dom_array, WRF_REAL, comm_1, comm_2, domain_desc, trim(fields(i)%mem_order), &
                        trim(fields(i)%stagger), fields(i)%dimnames, sd, ed, sm, em, sp, ep, istatus)
+#if defined(WPS_CHUNK_MPI) && defined(IO_NETCDF) && defined(_MPI) && !defined(_GEOGRID)
+                  if (c_associated(chunk_session)) then
+                     chunk_scope_status = chunk_unregister()
+                     if (istatus==0 .and. chunk_scope_status/=0) istatus=chunk_scope_status
+                     chunk_status = chunk_done(chunk_session,int(istatus,c_int))
+                     call chunk_destroy(chunk_session)
+                     chunk_session = c_null_ptr
+                  end if
+#endif
                end if
 #endif
 #ifdef IO_GRIB1
@@ -1235,6 +1358,13 @@ module output_module
    
       end if
   
+#if defined(WPS_CHUNK_MPI) && defined(IO_NETCDF) && defined(_MPI) && !defined(_GEOGRID)
+      if (c_associated(chunk_session)) then
+         if (my_proc_id==IO_NODE) chunk_status=chunk_done(chunk_session,int(istatus,c_int))
+         call chunk_destroy(chunk_session)
+         chunk_session=c_null_ptr
+      end if
+#endif
       if (allocated_real_locally) deallocate(real_dom_array)
   
    end subroutine write_field
@@ -1671,6 +1801,10 @@ module output_module
   
       end if
   
+#if defined(WPS_CHUNK_MPI) && defined(IO_NETCDF) && defined(_MPI) && !defined(_GEOGRID)
+      istatus=chunk_proof_write()
+      call mprintf((istatus/=0),ERROR,'Compressed output proof receipt failed')
+#endif
       if (associated(fields)) deallocate(fields)
  
    end subroutine output_close

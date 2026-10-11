@@ -1,0 +1,17 @@
+{
+  "files": {
+    "README.md": "0dd3ac7fe801a89101eb3aab53941224aab1ed307901a529decd3c0d21e985f6",
+    "build.py": "cd0bb808d710cd933ff90af13952b1df92499473f61e5b45f41b2d54d9408090",
+    "netcdf-c-4.9.2.patch": "c14342f147595d734758a92c3c7acad9983760472dc9776cea0480250b219d49",
+    "netcdf_precompressed.h": "f050797799f235dea8be9400198d0b8d44fbfca2acb45ed4a914b75b717311b4",
+    "oracle.c": "050e10a092881cc230c267d1340f43bde9e2aacb27df69714ea33803cc125390",
+    "review.json": "1dcea4882e9606e6539084da069038375b9689d7f7125a89c10f6055c1fcec1f",
+    "tests/fail_chunk.c": "7768e2db0ed83201ceb29b10891f020927b0395f3f32943e988b46129d2978d7",
+    "tests/failure_oracle.c": "4ee8b8e51840d3f80632ec0db41f40f5aa8d9bf03ef4973ce95f85b68c790dad",
+    "qualification.json": "0e5f18df3779a0e2f8198f751ebe6383460b0e05e5dfa5ef629fcc9533b2cf65"
+  },
+  "source_patch_sha256": "c14342f147595d734758a92c3c7acad9983760472dc9776cea0480250b219d49",
+  "api_header_sha256": "f050797799f235dea8be9400198d0b8d44fbfca2acb45ed4a914b75b717311b4",
+  "tested_build_script_sha256": "cd0bb808d710cd933ff90af13952b1df92499473f61e5b45f41b2d54d9408090",
+  "portable_install_library_sha256": "8adc33059a98399cd8adea41de071598aaa2b09ff53eb3ae860cad0c6696b538"
+}

@@ -1,0 +1,101 @@
+{
+  "schema_version": 1,
+  "status": "QUALIFIED_OPT_IN",
+  "deployment_scope": {
+    "MPI_ranks": 4,
+    "physical_cores": 4,
+    "compiler": "GNU13.3.0",
+    "MPI_thread_support": "MPI_THREAD_SINGLE/main thread",
+    "NetCDF_C": "4.9.2 patched owner",
+    "HDF5": "1.14.3 serial",
+    "zlib_ng": "2.3.3 compatibility mode",
+    "platform": "Linux little-endian IEEE float32"
+  },
+  "fast_path_ranks": [
+    2,
+    4
+  ],
+  "other_ranks": "ordinary synchronous fallback; focused1/16 lifecycle tested, stage qualification4ranks",
+  "metgrid_executable_sha256": "fbb373a1ce1e7055fefc1ff183e9e9c0fef87fba3cd6fde47ff7b7099c82afeb",
+  "owner_library_sha256": "8adc33059a98399cd8adea41de071598aaa2b09ff53eb3ae860cad0c6696b538",
+  "owner_header_sha256": "f050797799f235dea8be9400198d0b8d44fbfca2acb45ed4a914b75b717311b4",
+  "caller_source_sha256": "e3e2d6ee54a11ad69a9f5d4f3eab2bd1eca349dc753209038ec9b804fe906609",
+  "bridge_source_sha256": "24b76015ebaa42177ed0ce9c0027b29a21a214165a7c73a88323f7f5f926233f",
+  "source_package_build_receipt_sha256": "085a314a67b918bedbce6c56cef7122fe06baee2b732faf8f21067af5ab878c9",
+  "exact_acceptance": {
+    "short_stage_outputs": 8,
+    "native_three_hour_times": 5,
+    "six_hour_times": 25,
+    "six_hour_window_hours": [
+      0,
+      144
+    ],
+    "WRF4_8_initialization_outputs": [
+      "wrfinput_d01",
+      "wrfbdy_d01"
+    ],
+    "numerical_tolerances": "unchanged; complete byte identity or original pinned exact checker",
+    "forecast": "no new scientific forecast qualification"
+  },
+  "full25_provider_totals": {
+    "sessions": 2200,
+    "chunks": 8800,
+    "raw_padded_bytes": 64638000000,
+    "compressed_bytes": 22983392134,
+    "errors": 0,
+    "declines": 0,
+    "no_work": 0
+  },
+  "matched_stage_wall_reduction_percent": {
+    "median": 29.702608418058297,
+    "range": [
+      18.97791275074341,
+      29.74347466604029
+    ],
+    "pairs": 3,
+    "same_physical_cores": 4,
+    "same_zlib_ng": true
+  },
+  "receipt_root": "hpc01:/pool/wrf-experiment/results",
+  "receipts": {
+    "metgrid-backend-full25-batch0-hpc01-r1.json": {
+      "sha256": "3f542faa1578eb9e516a32061f80d3cf2d93208a3f7d245288b636ac3ea90347",
+      "status": "PASS",
+      "products": 5
+    },
+    "metgrid-backend-full25-batch1-hpc01-r1.json": {
+      "sha256": "9a7d8af33a38fb406112b1e7abf0c86775fc4102bbf769a67905771ca2090146",
+      "status": "PASS",
+      "products": 5
+    },
+    "metgrid-backend-full25-batch2-hpc02-r1.json": {
+      "sha256": "1d541a369384d070079c92344d408a543ff5ccedd1d9e6222023595220ddb8e8",
+      "status": "PASS",
+      "products": 5
+    },
+    "metgrid-backend-full25-batch3-hpc02-r1.json": {
+      "sha256": "953df0b43fcc07b3690d86e3422e0567763cc2e8a7fc24f4df9de608fc4c6dea",
+      "status": "PASS",
+      "products": 5
+    },
+    "metgrid-backend-full25-batch4-hpc03-r1.json": {
+      "sha256": "0b0a6b35dc2a8426f1622a6565eb0a652641b59396f306ec43751dd0a2a42a80",
+      "status": "PASS",
+      "products": 5
+    },
+    "metgrid-backend-cadence5-hpc01-r1.json": {
+      "sha256": "e2ca2aa462dfb3a6fd3ca3bbd8551f8109e3783c317a9c5ee41f7c477105fc7b",
+      "status": "PASS"
+    },
+    "downstream-backend-cadence-short-hpc04-r1.json": {
+      "sha256": "693c2b2cb9b8ff8151d8fb37d19bce75ab984e43f175f1dd0a8c8fb4a9a03c9e",
+      "status": "PASS"
+    },
+    "production-coverage.json": {
+      "sha256": "0dfd411cda244c52054681f4a4396f64002cafe346c7c9a4aa47f263ed04168e",
+      "status": "PASS"
+    }
+  },
+  "production_reference": "/pool/wrf/WPS remains read-only",
+  "deployment_and_rollback": "../METGRID_PARALLEL_COMPRESSION.md"
+}

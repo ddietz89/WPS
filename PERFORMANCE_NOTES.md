@@ -55,4 +55,8 @@ One paired sequential short run measured 277.23 seconds before and 224.20 second
 
 A separate cluster-specific orchestration experiment completed in 89.75 seconds using up to 48 model cores. That workflow is not part of this source patch and does not establish equal-core speedup.
 
-Full 25-time integrated WPS acceptance and downstream WRF initialization/forecast validation remain outstanding. These are experimental improvements; the production tree and original scientific reference were not modified.
+The previously qualified combined build passed full 25-time WPS acceptance and short WRF initialization. Forecast scientific qualification remains outstanding; the new optional backend has separate qualification recorded in OPTIMIZATION_FINDINGS.md. These are experimental improvements; the production tree and original scientific reference were not modified.
+
+## Optional parallel compression backend
+
+The opt-in MPI compression backend and its reproducible NetCDF owner extension are described in [tools/METGRID_PARALLEL_COMPRESSION.md](tools/METGRID_PARALLEL_COMPRESSION.md). Ordinary builds retain synchronous output. The backend uses 2 or 4 MPI ranks; other rank counts fall back. Matched four-core short-stage measurements reduced wall time 18.98–29.74%, median29.70%, with exact outputs. Deployment scope, multi-time/downstream acceptance, library identities and rollback are recorded in OPTIMIZATION_FINDINGS.md.

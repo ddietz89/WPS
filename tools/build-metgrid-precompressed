@@ -1,0 +1,52 @@
+#!/usr/bin/env bash
+# Build in a separately configured WPS checkout; never replace a system library.
+set -euo pipefail
+repo_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
+prefix="${1:-${METGRID_PRECOMPRESSED_NETCDF_PREFIX:-}}"
+if [[ -z "$prefix" || "$prefix" != /* || $# -gt 1 ]]; then
+    echo "Usage: tools/build-metgrid-precompressed /absolute/patched-netcdf-prefix" >&2
+    exit 2
+fi
+if [[ "$repo_dir" == /pool/wrf/WPS ]]; then
+    echo "Use a separate checkout; /pool/wrf/WPS is the read-only production reference." >&2
+    exit 2
+fi
+if [[ ! -f "$repo_dir/configure.wps" || ! -f "$prefix/include/netcdf_precompressed.h" || ! -f "$prefix/lib/libnetcdf.so" ]]; then
+    echo "Configure this checkout and install the provider-enabled NetCDF first." >&2
+    exit 2
+fi
+for symbol in nc_precompressed_provider_begin nc_precompressed_provider_end; do
+    nm -D --defined-only "$prefix/lib/libnetcdf.so" | awk -v symbol="$symbol" '$NF==symbol { found=1 } END { exit !found }' || {
+        echo "Provider symbol missing: $symbol" >&2; exit 2;
+    }
+done
+jobs="${WPS_BUILD_JOBS:-4}"
+[[ "$jobs" =~ ^[1-9][0-9]*$ ]] || { echo "WPS_BUILD_JOBS must be positive." >&2; exit 2; }
+export METGRID_PRECOMPRESSED_NETCDF_PREFIX="$prefix"
+# WPS's retained build ignores some compiler failures; require a fresh executable.
+rm -f -- "$repo_dir/metgrid/src/metgrid.exe"
+# A private configuration copy removes WPS's global .IGNORE for the inner build.
+# The configured checkout remains untouched, and any compiler error stops linking.
+strict_config="$(mktemp "$repo_dir/.metgrid-config.XXXXXX")"
+trap 'rm -f -- "$strict_config"' EXIT
+sed '/^[[:space:]]*\.IGNORE[[:space:]]*:/d' "$repo_dir/configure.wps" > "$strict_config"
+wrf_dir="$(env -u MAKEFLAGS -u MFLAGS make -s -f "$strict_config" \
+    --eval 'wps_print_wrf_dir:;@printf "%s\n" "$(WRF_DIR)"' wps_print_wrf_dir)"
+if [[ "$wrf_dir" != /* ]]; then wrf_dir="$repo_dir/$wrf_dir"; fi
+[[ -f "$wrf_dir/frame/module_internal_header_util.o" ]] || {
+    echo "Configured WRF build is missing: $wrf_dir" >&2; exit 2;
+}
+env -u MAKEFLAGS -u MFLAGS make -C "$repo_dir/metgrid/src" -j"$jobs" \
+    METGRID_STRICT_CONFIG="$strict_config" WRF_DIR="$wrf_dir" \
+    MAKE="make -r -j$jobs" metgrid.exe
+exe="$repo_dir/metgrid/src/metgrid.exe"
+[[ -x "$exe" ]] || { echo "Metgrid link failed; no new executable exists." >&2; exit 1; }
+nm "$exe" | awk '$NF=="wps_chunk_provider" { found=1 } END { exit !found }' || {
+    echo "Metgrid provider code was not linked." >&2; exit 1;
+}
+closure="$(LD_LIBRARY_PATH="$prefix/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}" ldd "$exe")"
+if [[ "$closure" == *'not found'* ]]; then echo "$closure" >&2; exit 1; fi
+ln -sfn src/metgrid.exe "$repo_dir/metgrid/metgrid.exe"
+ln -sfn metgrid/metgrid.exe "$repo_dir/metgrid.exe"
+printf '%s\n' "$closure"
+echo "Built optional provider Metgrid. Run with WPS_PRECOMPRESSED_NETCDF_PREFIX=$prefix tools/metgrid -- <MPI command> $exe"

@@ -3,7 +3,22 @@
 set -euo pipefail
 repo_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
 if [[ "${1:-}" == -- ]]; then shift; fi
-if [[ $# == 0 ]]; then set -- "$repo_dir/metgrid.exe"; fi
+if [[ $# == 0 ]]; then set -- "${WPS_METGRID_EXECUTABLE:-$repo_dir/metgrid.exe}"; fi
+
+# Select the separately installed provider library for an optional backend build.
+# Rollback uses the ordinary executable with this variable unset.
+if [[ -n "${WPS_PRECOMPRESSED_NETCDF_PREFIX:-}" ]]; then
+    if [[ "$WPS_PRECOMPRESSED_NETCDF_PREFIX" != /* ]]; then
+        echo "WPS_PRECOMPRESSED_NETCDF_PREFIX must be absolute." >&2
+        exit 1
+    fi
+    provider_dir="$WPS_PRECOMPRESSED_NETCDF_PREFIX/lib"
+    if [[ ! -f "$WPS_PRECOMPRESSED_NETCDF_PREFIX/include/netcdf_precompressed.h" || ! -f "$provider_dir/libnetcdf.so" ]]; then
+        echo "Patched NetCDF installation missing in WPS_PRECOMPRESSED_NETCDF_PREFIX." >&2
+        exit 1
+    fi
+    export LD_LIBRARY_PATH="$provider_dir${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+fi
 
 if [[ "${WPS_USE_STOCK_ZLIB:-0}" == 1 ]]; then
     exec "$@"

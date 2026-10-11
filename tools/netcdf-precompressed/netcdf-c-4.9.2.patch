@@ -1,0 +1,352 @@
+--- a/libhdf5/hdf5var.c
++++ b/libhdf5/hdf5var.c
+@@ -1,3 +1,6 @@
++#ifndef _GNU_SOURCE
++#define _GNU_SOURCE
++#endif
+ /* Copyright 2003-2019, University Corporation for Atmospheric
+  * Research. See COPYRIGHT file for copying and redistribution
+  * conditions.*/
+@@ -16,6 +19,250 @@
+ 
+ #include "netcdf.h"
+ #include "netcdf_filter.h"
++
++/* Codex local implementation; external dispatch rejected before API access. */
++#include "netcdf_precompressed.h"
++#include <stdint.h>
++#include <float.h>
++#include <unistd.h>
++#ifdef __linux__
++#include <sys/syscall.h>
++#endif
++
++typedef struct {
++    nc_precompressed_float_provider provider;
++    void *user;
++    int busy;
++} NC_PC_SCOPE;
++static NC_PC_SCOPE nc_pc_scope;
++
++static int
++nc_pc_is_main_thread(void)
++{
++#ifdef __linux__
++    return syscall(SYS_gettid) == (long)getpid();
++#else
++    /* Experimental Linux-only prefix: no unchecked foreign-thread scope. */
++    return 0;
++#endif
++}
++
++/* Private dispatch guard covers existing-handle NC calls plus create/open.
++ * Direct HDF5 calls are forbidden by provider contract, not intercepted. */
++int
++NC_pc_reentry_forbidden(void)
++{
++    return nc_pc_scope.provider && (!nc_pc_is_main_thread() || nc_pc_scope.busy);
++}
++
++int
++nc_precompressed_provider_begin(nc_precompressed_float_provider provider, void *user)
++{
++    if (!nc_pc_is_main_thread() || !provider || nc_pc_scope.provider || nc_pc_scope.busy)
++        return NC_EINVAL;
++    nc_pc_scope.provider = provider;
++    nc_pc_scope.user = user;
++    return NC_NOERR;
++}
++
++int
++nc_precompressed_provider_end(void)
++{
++    if (!nc_pc_is_main_thread() || nc_pc_scope.busy)
++        return NC_EINVAL;
++    nc_pc_scope.provider = NULL;
++    nc_pc_scope.user = NULL;
++    return NC_NOERR;
++}
++
++static void
++nc_pc_release(nc_precompressed_float_batch *batch)
++{
++    if (batch->release) {
++        /* Release is part of callback scope: reentrant NC writes are forbidden. */
++        nc_pc_scope.busy = 1;
++        batch->release(batch->release_user);
++        nc_pc_scope.busy = 0;
++    }
++}
++
++/* Conservative, read-only eligibility. All native NC4 checks/extent work are
++ * already complete. Unknown metadata retains ordinary numerical H5Dwrite. */
++static int
++nc_pc_describe(NC_FILE_INFO_T *h5, NC_VAR_INFO_T *var, hid_t dataset,
++               const hsize_t *start, const hsize_t *count, const hsize_t *stride,
++               nc_precompressed_float_layout *layout, size_t *grid,
++               size_t *raw_bytes)
++{
++    hid_t dcpl = -1, dtype = -1;
++    H5D_fill_value_t fill_status;
++    unsigned flags, params[2];
++    size_t nparams, elements = 1, chunk_elements = 1, chunks = 1;
++    hsize_t chunk_dims[4];
++    uint32_t host = 1;
++    int i, eligible = 0;
++    if (h5->no_write || var->no_fill || var->quantize_mode ||
++        var->type_info->hdr.id != NC_FLOAT || (var->ndims != 3 && var->ndims != 4) ||
++        sizeof(float) != 4 || FLT_RADIX != 2 || FLT_MANT_DIG != 24 ||
++        *((unsigned char *)&host) != 1)
++        return 0;
++#ifdef USE_PARALLEL4
++    if (h5->parallel)
++        return 0;
++#endif
++    memset(layout, 0, sizeof(*layout));
++    layout->abi_version = NC_PRECOMPRESSED_ABI;
++    layout->ndims = var->ndims;
++    for (i = 0; i < var->ndims; i++) {
++        if (!count[i] || count[i] > SIZE_MAX || start[i] > SIZE_MAX || stride[i] != 1)
++            return 0;
++        if (i == 0) {
++            if (!var->dim[i]->unlimited || count[i] != 1)
++                return 0;
++        } else if (var->dim[i]->unlimited || start[i] != 0 ||
++                   count[i] != var->dim[i]->len) {
++            return 0;
++        }
++        if (elements > SIZE_MAX / (size_t)count[i])
++            return 0;
++        elements *= (size_t)count[i];
++        layout->request_start[i] = (size_t)start[i];
++        layout->request_count[i] = (size_t)count[i];
++        layout->field_dims[i] = (size_t)count[i];
++    }
++    if (elements > SIZE_MAX / 4)
++        return 0;
++    *raw_bytes = elements * 4;
++    if ((dtype = H5Dget_type(dataset)) < 0 ||
++        H5Tequal(dtype, H5T_IEEE_F32LE) <= 0 ||
++        (dcpl = H5Dget_create_plist(dataset)) < 0 ||
++        H5Pget_layout(dcpl) != H5D_CHUNKED ||
++        H5Pget_chunk(dcpl, 4, chunk_dims) != var->ndims ||
++        H5Pget_nfilters(dcpl) != 2)
++        goto done;
++    nparams = 2;
++    if (H5Pget_filter2(dcpl, 0, &flags, &nparams, params, 0, NULL, NULL) != H5Z_FILTER_SHUFFLE ||
++        nparams != 1 || params[0] != 4)
++        goto done;
++    nparams = 2;
++    if (H5Pget_filter2(dcpl, 1, &flags, &nparams, params, 0, NULL, NULL) != H5Z_FILTER_DEFLATE ||
++        nparams != 1 || params[0] != 2)
++        goto done;
++    if (H5Pfill_value_defined(dcpl, &fill_status) < 0 ||
++        fill_status == H5D_FILL_VALUE_UNDEFINED ||
++        H5Pget_fill_value(dcpl, H5T_IEEE_F32LE, layout->fill_le) < 0)
++        goto done;
++    for (i = 0; i < var->ndims; i++) {
++        if (!chunk_dims[i] || chunk_dims[i] > SIZE_MAX ||
++            (i == 0 && chunk_dims[i] != 1))
++            goto done;
++        layout->chunk_dims[i] = (size_t)chunk_dims[i];
++        if (chunk_elements > UINT32_MAX / layout->chunk_dims[i])
++            goto done;
++        chunk_elements *= layout->chunk_dims[i];
++        grid[i] = layout->request_count[i] / layout->chunk_dims[i] +
++                  (layout->request_count[i] % layout->chunk_dims[i] != 0);
++        if (chunks > SIZE_MAX / grid[i])
++            goto done;
++        chunks *= grid[i];
++    }
++    if (chunk_elements > UINT32_MAX / 4)
++        goto done;
++    layout->total_chunks = chunks;
++    eligible = 1;
++done:
++    /* Query failure is uncertain eligibility, not a new replacement write. */
++    if (dcpl >= 0 && H5Pclose(dcpl) < 0)
++        eligible = 0;
++    if (dtype >= 0 && H5Tclose(dtype) < 0)
++        eligible = 0;
++    return eligible;
++}
++
++/* handled=0 only before any direct write; native caller then writes original
++ * bufr. Any provider/validation/backend error is terminal, never fallback. */
++static int
++nc_pc_write(int ncid, int varid, NC_FILE_INFO_T *h5, NC_VAR_INFO_T *var,
++            hid_t dataset, const hsize_t *start, const hsize_t *count,
++            const hsize_t *stride, const void *raw, int *handled)
++{
++    nc_precompressed_float_layout layout;
++    size_t grid[4], raw_bytes, first, q;
++    int attempted = 0, decision, status, d;
++    *handled = 0;
++    if (!nc_pc_describe(h5, var, dataset, start, count, stride,
++                        &layout, grid, &raw_bytes))
++        return NC_NOERR;
++    if (!raw) {
++        *handled = 1;
++        return NC_EINVAL;
++    }
++    layout.ncid = ncid;
++    layout.varid = varid;
++    for (first = 0; first < layout.total_chunks; ) {
++        nc_precompressed_float_batch batch;
++        memset(&batch, 0, sizeof(batch));
++        layout.batch_first = first;
++        layout.batch_count = layout.total_chunks - first;
++        if (layout.batch_count > NC_PRECOMPRESSED_BATCH_MAX)
++            layout.batch_count = NC_PRECOMPRESSED_BATCH_MAX;
++        memset(layout.offsets, 0, sizeof(layout.offsets));
++        for (q = 0; q < layout.batch_count; q++) {
++            size_t ordinal = first + q;
++            for (d = layout.ndims - 1; d >= 0; d--) {
++                size_t coordinate = ordinal % grid[d];
++                ordinal /= grid[d];
++                /* grid construction bounds this product within request count. */
++                size_t relative = coordinate * layout.chunk_dims[d];
++                if (relative > SIZE_MAX - layout.request_start[d]) {
++                    *handled = 1;
++                    return NC_EINVAL;
++                }
++                layout.offsets[q][d] = layout.request_start[d] + relative;
++            }
++        }
++        nc_pc_scope.busy = 1;
++        decision = nc_pc_scope.provider(&layout, raw, raw_bytes, &batch, nc_pc_scope.user);
++        nc_pc_scope.busy = 0;
++        if (decision == 0 && !attempted) {
++            nc_pc_release(&batch);
++            return NC_NOERR;
++        }
++        *handled = 1;
++        status = NC_NOERR;
++        if (decision < 0)
++            status = decision;
++        else if (decision != 1 || batch.count != layout.batch_count)
++            status = NC_EINVAL;
++        if (!status) {
++            for (q = 0; q < batch.count; q++) {
++                if (!batch.data[q] || !batch.nbytes[q] || batch.nbytes[q] > UINT32_MAX) {
++                    status = NC_EINVAL;
++                    break;
++                }
++            }
++        }
++        if (!status) {
++            for (q = 0; q < batch.count; q++) {
++                hsize_t offset[4];
++                for (d = 0; d < layout.ndims; d++)
++                    offset[d] = (hsize_t)layout.offsets[q][d];
++                attempted = 1;
++                if (H5Dwrite_chunk(dataset, H5P_DEFAULT, 0, offset,
++                                   batch.nbytes[q], batch.data[q]) < 0) {
++                    status = NC_EHDFERR;
++                    break;
++                }
++            }
++        }
++        nc_pc_release(&batch);
++        if (status)
++            return status;
++        first += layout.batch_count;
++    }
++    return NC_NOERR;
++}
++
+ 
+ /** @internal Temp name used when renaming vars to preserve varid
+  * order. */
+@@ -1555,6 +1802,10 @@
+     int need_to_convert = 0;
+     int zero_count = 0; /* true if a count is zero */
+     size_t len = 1;
++
++    /* Guard before original NC metadata work, including direct internal calls. */
++    if (NC_pc_reentry_forbidden())
++        return NC_EINVAL;
+ 
+     /* Find info for this file, group, and var. */
+     if ((retval = nc4_hdf5_find_grp_h5_var(ncid, varid, &h5, &grp, &var)))
+@@ -1791,10 +2042,19 @@
+     /* Write the data. At last! */
+     LOG((4, "about to H5Dwrite datasetid 0x%x mem_spaceid 0x%x "
+          "file_spaceid 0x%x", hdf5_var->hdf_datasetid, mem_spaceid, file_spaceid));
+-    if (H5Dwrite(hdf5_var->hdf_datasetid,
+-                 ((NC_HDF5_TYPE_INFO_T *)var->type_info->format_type_info)->hdf_typeid,
+-                 mem_spaceid, file_spaceid, xfer_plistid, bufr) < 0)
+-        BAIL(NC_EHDFERR);
++    {
++        int pc_handled = 0;
++        if (nc_pc_scope.provider && !need_to_convert && !zero_count && mem_nc_type == NC_FLOAT) {
++            retval = nc_pc_write(ncid, varid, h5, var, hdf5_var->hdf_datasetid,
++                                 start, count, stride, bufr, &pc_handled);
++            if (retval)
++                BAIL(retval);
++        }
++        if (!pc_handled && H5Dwrite(hdf5_var->hdf_datasetid,
++                     ((NC_HDF5_TYPE_INFO_T *)var->type_info->format_type_info)->hdf_typeid,
++                     mem_spaceid, file_spaceid, xfer_plistid, bufr) < 0)
++            BAIL(NC_EHDFERR);
++    }
+ 
+     /* Remember that we have written to this var so that Fill Value
+      * can't be set for it. */
+--- a/libdispatch/nc.c
++++ b/libdispatch/nc.c
+@@ -20,6 +20,9 @@
+ #include <unistd.h>
+ #endif
+ #include "ncdispatch.h"
++#ifdef USE_NETCDF4
++extern int NC_pc_reentry_forbidden(void);
++#endif
+ 
+ #ifndef nulldup
+  #define nulldup(x) ((x)?strdup(x):(x))
+@@ -41,7 +44,11 @@
+ int
+ NC_check_id(int ncid, NC** ncpp)
+ {
+-    NC* nc = find_in_NCList(ncid);
++    NC* nc;
++#ifdef USE_NETCDF4
++    if (NC_pc_reentry_forbidden()) return NC_EINVAL;
++#endif
++    nc = find_in_NCList(ncid);
+     if(nc == NULL) return NC_EBADID;
+     if(ncpp) *ncpp = nc;
+     return NC_NOERR;
+--- a/libdispatch/dfile.c
++++ b/libdispatch/dfile.c
+@@ -34,6 +34,9 @@
+ #endif
+ 
+ #include "ncdispatch.h"
++#ifdef USE_NETCDF4
++extern int NC_pc_reentry_forbidden(void);
++#endif
+ #include "netcdf_mem.h"
+ #include "ncpathmgr.h"
+ #include "fbits.h"
+@@ -1843,6 +1846,9 @@
+     NCmodel model;
+     char* newpath = NULL;
+ 
++#ifdef USE_NETCDF4
++    if (NC_pc_reentry_forbidden()) return NC_EINVAL;
++#endif
+     TRACE(nc_create);
+     if(path0 == NULL)
+         {stat = NC_EINVAL; goto done;}
+@@ -1978,6 +1984,9 @@
+     NCmodel model;
+     char* newpath = NULL;
+ 
++#ifdef USE_NETCDF4
++    if (NC_pc_reentry_forbidden()) return NC_EINVAL;
++#endif
+     TRACE(nc_open);
+     if(!NC_initialized) {
+         stat = nc_initialize();

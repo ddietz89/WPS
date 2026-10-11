@@ -1,0 +1,240 @@
+{
+  "status": "INDEPENDENT_REVIEW_COMPLETE_PENDING_INTEGRATED_PROMOTION",
+  "payload_sha256": "dfffceb9da98f3fa16363048e7874ecb59f44b5793b33e067cd9acddd5a9498a",
+  "offload_receipt": {
+    "task_id": "M6-owner-promotion-review",
+    "runner": "bounded_direct_chat_completions_v1",
+    "endpoint": "https://api.deepseek.com",
+    "model": "deepseek/deepseek-flash",
+    "payload_sha256": "dfffceb9da98f3fa16363048e7874ecb59f44b5793b33e067cd9acddd5a9498a",
+    "authorization": "results/m6/offload-standing-authorization.json",
+    "tools": "none",
+    "thinking": "disabled",
+    "limit_seconds": 240,
+    "max_tokens": 8192,
+    "acceptance": "pending_independent_codex_review",
+    "actual_charge_usd": null,
+    "started_utc": "2026-10-11T22:55:32.198259+00:00",
+    "status": "returned",
+    "finish_reason": "stop",
+    "usage": {
+      "prompt_tokens": 4904,
+      "completion_tokens": 3189,
+      "total_tokens": 8093,
+      "prompt_tokens_details": {
+        "cached_tokens": 0
+      },
+      "prompt_cache_hit_tokens": 0,
+      "prompt_cache_miss_tokens": 4904
+    },
+    "response_model": "deepseek-flash",
+    "elapsed_seconds": 22.317290488164872
+  },
+  "worker_findings": {
+    "findings": [
+      {
+        "severity": "blocker",
+        "location": "libhdf5/hdf5var.c nc_pc_write: H5Dwrite_chunk of provider data, adjacent to original H5Dwrite",
+        "concrete_failure": "Failed H5Dwrite_chunk leaves the file refcount/data in an unknown state (HDF5 error stack pushed, partial chunk-store side effects), yet BAIL(retval) then proceeds through normal NetCDF error handling which can call H5Fflush/sync/close of the same file. The contract states any direct-write attempt is terminal/discard file, but the code only returns NC_EHDFERR; the file is not marked no_write or otherwise quarantined, so existing 'close-on-error' paths may flush a corrupted/partial raw-chunk stream and the HDF5 error stack is not cleared before subsequent NC/HDF calls. This is a real promotion blocker: terminal-vs-fallback semantics are enforced in control flow only, not in file state.",
+        "suggested_minimal_fix": "On first attempted direct write, set a persistent 'direct_attempted_file_poisoned' state (e.g., h5->no_write = NC_TRUE and record a terminal error on the NC_FILE_INFO_T), and clear the HDF5 error stack (H5Eclear2) before returning, so subsequent flush/close cannot surface stale partial chunks as success. Alternatively document/assert that the caller must discard the handle and never close-and-sync."
+      },
+      {
+        "severity": "blocker",
+        "location": "libhdf5/hdf5var.c nc_pc_write: *handled = 1 assignment for errors and mismatch, after decision path",
+        "concrete_failure": "On provider returning a negative error or decision!=1 (validation failure), *handled is set to 1 and the function returns the error. The caller BAILs, which is correct per 'terminal'. However, on the first provider decline (decision==0) with attempted==0, the code does nc_pc_release(&batch) and returns NC_NOERR with *handled still 0, allowing fallback to original H5Dwrite. If the provider declined but ALSO populated batch.data/nbytes (non-conforming provider) and set a release callback, the release is called exactly once (good). But if the provider declined and left batch.count!=0 with a release that aliases raw_data, original H5Dwrite later reads freed memory. Contract requires raw_data be actual buffer; a decline that allocated must release. This is acceptable only if decline guarantees no retained raw pointer; the API does not validate. Risk: original-write fallback reads a release-freed buffer.",
+        "suggested_minimal_fix": "On decline path, before releasing, snapshot that no result pointers overlap raw_data (documented precondition) or call release only after confirming batch.count==0 for the decline case; at minimum add an assertion/comment that a declining provider must not free or alias raw_data. Keep the single-release guarantee."
+      },
+      {
+        "severity": "major",
+        "location": "libhdf5/hdf5var.c nc_pc_describe: H5Pget_filter2 param buffer and filter index assumptions",
+        "concrete_failure": "The code assumes exactly 2 filters in order [0]=SHUFFLE(params[0]==4), [1]=DEFLATE(params[0]==2). H5Pget_nfilters==2 plus exact param equality is a reasonable gate, but H5Pget_filter2 with nparams in/out: the code sets nparams=2 before each call and checks nparams==1 after. If the pipeline uses DEFLATE level encoded differently or a third auxiliary filter, describe returns 0 and eligibility silently falls back to numerical H5Dwrite. That fallback is correct but means a provider that expected to supply streams sees ordinary writes with no diagnostic. Not a correctness bug, but an API misleading-claim risk: 'eligible' silently false yields no signal.",
+        "suggested_minimal_fix": "Emit a diagnostic (or count) when provider is active but nc_pc_describe returns ineligible, so silent numerical fallback on a provider-active call is observable. No logic change required."
+      },
+      {
+        "severity": "major",
+        "location": "libhdf5/hdf5var.c nc_pc_describe: fill value and tail packing contract",
+        "concrete_failure": "layout->fill_le is filled via H5Pget_fill_value into 4 bytes. The header contract says provider packs fill_le at tails. If a variable uses a fill value whose HDF5 representation differs from the NC-visible default (e.g., user-set fill via nc_def_var_fill that NetCDF stores in its own var->fill_value separate from the DCPL), reading only the DCPL fill could produce a fill_le that differs from what the read path later materializes for unwritten cells. On reopen, unwritten tail cells are materialized from NetCDF's fill, not necessarily H5 DCPL fill, causing a value mismatch vs the packed tail.",
+        "suggested_minimal_fix": "Source fill_le from the same authority the NetCDF read path uses (variable fill value in NC_VAR_INFO_T / the fill used by ordinary H5Dwrite tail handling), or verify var->fill_value equals DCPL fill before marking eligible; otherwise decline."
+      },
+      {
+        "severity": "major",
+        "location": "libhdf5/hdf5var.c nc_pc_write: batch loop advances first by layout.batch_count, but offsets computed per batch from ordinal over grid",
+        "concrete_failure": "Offsets are recomputed correctly per batch, but chunk ordinals imply that ALL chunks in [first, first+batch_count) fall within the requested count region must be fully written by the provider. For the unlimited/record dim (i==0) chunk_dims[0]==1 and count[0]==1 is required, so only one record is eligible; grid[0] is then 1. OK. But for a request that is a partial (non-multiple) span in non-record dims, the last chunk along each dim is a 'tail' chunk that mixes requested and unrequested cells. The provider is told raw includes only valid requested cells with nbytes possibly < full chunk, and must pack fill at tails. If the request does NOT start at 0 for non-record dims it is rejected (start[i]!=0 returns 0). So partial-in-middle is excluded. The remaining risk: a request whose count exceeds dim length is prevented, but request_count < dim->len with start==0 yields an interior-excluded but end-open region; the code allows count[i] != dim->len (it checks var->dim[i]->len, not equality). Actually it REQUIRES count[i]==var->dim[i]->len for i>0. So full-extent-only for non-record. This is consistent. No failure.",
+        "suggested_minimal_fix": "None; confirm requirement stays full-extent for non-record dims (it does)."
+      },
+      {
+        "severity": "major",
+        "location": "libhdf5/hdf5var.c nc_pc_write error mapping: batch.nbytes[q] > UINT32_MAX rejected",
+        "concrete_failure": "H5Dwrite_chunk takes a size_t nbytes; the UINT32_MAX cap is artificial and only needed if provider streams are format-limited. Rejecting nbytes>UINT32_MAX as NC_EINVAL is terminal and correctly sets *handled, but a chunk exceeding UINT32_MAX (chunk_elements up to UINT32_MAX/4 elements => up to ~UINT32_MAX bytes) means a chunk larger than 4GiB-1 cannot be expressed. Given chunk_elements <= UINT32_MAX/4 enforced in describe, raw chunk bytes <= UINT32_MAX, consistent. No failure for supported geometry.",
+        "suggested_minimal_fix": "None; document that max chunk is UINT32_MAX bytes by construction."
+      },
+      {
+        "severity": "minor",
+        "location": "libhdf5/hdf5var.c nc_pc_release: busy=1 around release; release is called even when provider returned data that will be written",
+        "concrete_failure": "Release is invoked after H5Dwrite_chunk loop completes (or on early validation failure). Contract says 'Root owner releases each result once, including errors.' The code releases once per batch, but if the provider returned decision==0 (decline) it still calls release \u2014 correct only if decline may have allocated. Also, after a mid-batch H5Dwrite_chunk failure, remaining q offsets for that batch are not written, but release is still called once with the full batch.count; provider may free nbytes for all count entries including the unwritten tail \u2014 acceptable since provider supplied them. Consistent, but the guarantee 'each result once' holds only per attempted batch; batches after the failing one never call provider at all. Correct.",
+        "suggested_minimal_fix": "None; behavior matches contract."
+      },
+      {
+        "severity": "minor",
+        "location": "libhdf5/hdf5var.c: H5Dwrite_chunk filter mask hardcoded 0",
+        "concrete_failure": "filter_mask 0 means all pipeline filters are considered applied (i.e., the caller claims the bytes are the final on-disk chunk bytes AFTER all filters including shuffle+deflate). This requires the provider to output shuffled-then-DEFLATE bytes. The header contract says exactly that. A mask of 0 is correct only if the provider actually produced post-filter bytes; if the provider mistakenly returns pre-filter data, HDF5 will store it verbatim and read back garbage with no error. API cannot validate compressed payload (stated). Acceptable given trusted provider, but no defense.",
+        "suggested_minimal_fix": "None required under trusted-provider contract; consider documenting the mask=0 meaning explicitly in the header to avoid misuse."
+      },
+      {
+        "severity": "minor",
+        "location": "libdispatch/nc.c NC_check_id and dfile.c nc_create/nc_open reentry guard",
+        "concrete_failure": "NC_pc_reentry_forbidden() returns true when provider set and (non-main-thread OR busy). During the provider callback, busy==1 so any NC call returns NC_EINVAL \u2014 correct. But NC_pc_reentry_forbidden() is only defined when USE_NETCDF4; the extern is guarded. For non-NetCDF4 builds the symbol is absent and no guard exists \u2014 acceptable since provider extension is NetCDF4-only. However, the guard is bypassed for direct HDF5 calls (stated as forbidden by contract, not intercepted) \u2014 matches contract.",
+        "suggested_minimal_fix": "None; ensure provider extension is compiled only with NetCDF4."
+      },
+      {
+        "severity": "minor",
+        "location": "libhdf5/hdf5var.c nc_pc_is_main_thread: syscall(SYS_gettid)==getpid()",
+        "concrete_failure": "Equating tid with pid is valid only for the main thread of a single-threaded-process main thread on Linux. Under some containers/namespaces getpid() may return the namespace pid while gettid() returns a host-ish tid; normally equal for main thread. Contract restricts to Linux main thread, so acceptable. If NetCDF is built with pthreads where the 'main' thread is the initial thread, equality holds; if the API is called from an MPI rank's thread that is not the process main thread, guard rejects \u2014 matching 'root/main thread only'.",
+        "suggested_minimal_fix": "None; note reliance on Linux gettid semantics and that non-main-thread calls are rejected intentionally."
+      },
+      {
+        "severity": "info",
+        "location": "libhdf5/hdf5var.c eligibility: parallelism disabled via USE_PARALLEL4 && h5->parallel",
+        "concrete_failure": "Parallel HDF5 path returns ineligible. Serial HDF5 1.14.3 is the target, so fine. If ever parallel, silent fallback \u2014 acceptable per contract.",
+        "suggested_minimal_fix": "None."
+      }
+    ],
+    "contract_limits": [
+      "Provider algorithm correctness (dual-decompression proof) is owned elsewhere; the API cannot validate arbitrary malicious payloads and does not.",
+      "Trusted-provider assumption: H5Dwrite_chunk filter_mask=0 stores provider bytes verbatim; pre-filter or malformed bytes are not detected.",
+      "Raw chunk cache eviction without flush means only complete chunk replacement is safe; the code writes every chunk in the requested region, satisfying complete replacement under the enforced full-extent/full-record constraints.",
+      "Eligibility is silent: ineligible geometry/metadata silently falls back to numerical H5Dwrite with no diagnostic; provider decline on first batch permits original-write fallback once only; after any direct write all errors are terminal but the file handle is not quarantined in code.",
+      "Fill value used for tail packing is read from the HDF5 DCPL; if NetCDF's authoritative fill differs, packed tails can diverge from the read path's materialized fill.",
+      "Non-thread-safe, single-active, Linux main-thread-only scope; non-NetCDF4 builds have no guard symbol.",
+      "Chunk size capped at UINT32_MAX bytes by construction (chunk_elements <= UINT32_MAX/4)."
+    ],
+    "verdict": "Promotion blocked. Two blockers: (1) failed H5Dwrite_chunk is treated as a returned error without poisoning/quarantining the file state or clearing the HDF5 error stack, so 'terminal/discard' is enforced only in control flow and a subsequent flush/close can operate on a partially written chunk store; (2) on provider decline, release() runs before the original H5Dwrite fallback, so a non-conforming declining provider that frees or aliases raw_data can cause the fallback write to read freed memory, and the API does not enforce the documented precondition. Additional major risk: fill_le is sourced solely from the HDF5 fill value, which may not match the authoritative NetCDF fill used for tail materialization on reopen, causing packed-tail value mismatches; silent ineligibility fallback while a provider is active yields no signal. The unchanged checker/oracle passes do not exercise these failure modes (failed raw-chunk write recovery, decline-with-free fallback aliasing, fill divergence). Resolve the two blockers and validate fill authority before promotion."
+  },
+  "independent_disposition": [
+    {
+      "topic": "file quarantine/errorstack",
+      "verdict": "No owner source change",
+      "evidence": "NetCDF write errors are not transactional. Caller must propagate error, close for cleanup and discard failed file. Quarantining h5->no_write or clearing diagnostics does not provide rollback. Focused first/second real HDF failure oracle added."
+    },
+    {
+      "topic": "decline callback freeing raw buffer",
+      "verdict": "Invalid provider ownership; API contract clarified",
+      "evidence": "Raw data and layout are borrowed immutable; only separately allocated returned streams/release state are provider-owned. Enforcing arbitrary invalid free is not an API guarantee."
+    },
+    {
+      "topic": "fill authority divergence",
+      "verdict": "Disproved by retained source",
+      "evidence": "NetCDF4.9.2 libhdf5/nc4hdf.c856 calls nc4_get_fill_value;878 stores it in H5Pset_fill_value. Owner reads that same DCPL. Custom/default fill and Time gap oracle passed."
+    },
+    {
+      "topic": "silent fallback",
+      "verdict": "Already addressed by integration acceptance",
+      "evidence": "Ineligible path deliberately preserves ordinarywrite; caller work/byte proof required for eligible selected workload, no library logging needed."
+    },
+    {
+      "topic": "worker findings explicitly state no failure",
+      "verdict": "No source change justified",
+      "evidence": "Full extents, record chunk1, uint32 cap, filtermask0, release and Linuxscope reflect intended frozencontract."
+    }
+  ],
+  "patch_sha256": "c14342f147595d734758a92c3c7acad9983760472dc9776cea0480250b219d49",
+  "qualification_library_sha256": "465302d5d5cf806a8719aa1c11b5b87f9ca57bac72e19178763a8e73cb24eb67",
+  "original_source_origin": "Codex local; initial approved DeepSeek implementation independently rejected; focused subsequent review returned and independently assessed",
+  "focused_real_hdf_error_oracle": {
+    "receipt_sha256": "33d1a5e29f72df73bb84be332c748c04272b564b3a844bb299816d22f4baf833",
+    "receipt": {
+      "status": "PASS",
+      "owner_library_sha256": "465302d5d5cf806a8719aa1c11b5b87f9ca57bac72e19178763a8e73cb24eb67",
+      "commands": [
+        [
+          "/pool/wrf-experiment/toolchains/gnu/13.3.0/bin/gcc",
+          "-O2",
+          "-fno-fast-math",
+          "-ffp-contract=off",
+          "-I/pool/wrf-experiment/toolchains/gnu/13.3.0/deps/include",
+          "-I/pool/wrf-experiment/tasks/backend-integration/netcdf-owner",
+          "-shared",
+          "-fPIC",
+          "/pool/wrf-experiment/tasks/backend-integration/netcdf-owner/promotion-review/fail_chunk.c",
+          "-ldl",
+          "-o",
+          "/pool/wrf-experiment/tasks/backend-integration/netcdf-owner/promotion-review/fail_chunk.so"
+        ],
+        [
+          "/pool/wrf-experiment/toolchains/gnu/13.3.0/bin/gcc",
+          "-O2",
+          "-fno-fast-math",
+          "-ffp-contract=off",
+          "-I/pool/wrf-experiment/toolchains/gnu/13.3.0/deps/include",
+          "-I/pool/wrf-experiment/tasks/backend-integration/netcdf-owner",
+          "/pool/wrf-experiment/tasks/backend-integration/netcdf-owner/promotion-review/failure_oracle.c",
+          "-L/pool/wrf-experiment/toolchains/gnu/13.3.0/deps/lib",
+          "-Wl,-rpath,/pool/wrf-experiment/toolchains/gnu/13.3.0/deps/lib",
+          "-lnetcdf",
+          "-lz",
+          "-ldl",
+          "-pthread",
+          "-o",
+          "/pool/wrf-experiment/tasks/backend-integration/netcdf-owner/promotion-review/failure_oracle"
+        ]
+      ],
+      "rows": [
+        {
+          "after_successful_direct_chunks": 0,
+          "status": "PASS",
+          "log": "/pool/wrf-experiment/results/backend-integration/netcdf-owner-hdf-error-r3/0.log",
+          "log_sha256": "76b62584ea00f1ea1de6e836c7a3409be57708f0ba8b199c7983a64736bb003a"
+        },
+        {
+          "after_successful_direct_chunks": 1,
+          "status": "PASS",
+          "log": "/pool/wrf-experiment/results/backend-integration/netcdf-owner-hdf-error-r3/1.log",
+          "log_sha256": "cdfee87a4844176191d2d13974e6356061a36f09011e0a294c0b2c6b9d0d1f45"
+        }
+      ],
+      "source_pins": {
+        "/pool/wrf-experiment/tasks/backend-integration/netcdf-owner/promotion-review/fail_chunk.c": "2825864cdd3fb7b484ec07e53075c5551bd5884ed590f859d58008f23ac76a20",
+        "/pool/wrf-experiment/tasks/backend-integration/netcdf-owner/promotion-review/failure_oracle.c": "eeb392ed7070df6b47560215d218aebf6d89615f823a7f4e90df8a59d78d174f",
+        "/pool/wrf-experiment/tasks/backend-integration/netcdf-owner/oracle.c": "bfc9465f7d27bdf5bd67b6afef374c738a94e4f37ea3268c80334879080c6b0e",
+        "/pool/wrf-experiment/tasks/backend-integration/netcdf-owner/promotion-review/failure_run.py": "a47923f6ff3e9756f4e08691404077943525a92dc2db17c8dccdd8ef347a4dac"
+      },
+      "resource": {
+        "host": "hpc02",
+        "cpus": [
+          16,
+          17,
+          18,
+          19,
+          20,
+          21,
+          22,
+          23
+        ],
+        "cpu_quota": 8,
+        "memory_bytes": 34359738368,
+        "swap_bytes": 0
+      },
+      "disposition": "True HDF5 error injected by forwarding size0 to real H5Dwrite_chunk at first/second attempt. Error returned NC_EHDFERR with matching callback/release and no fallback; cleanupclose allowed, failedproduct discarded, fresh scoped file writes/readback PASS. No owner source change."
+    }
+  },
+  "portable_build": {
+    "canonical_receipt": "builds/backend-integration/netcdf-owner-package-r1/work/build-receipt.json",
+    "receipt_sha256": "ba9f7a477725f4d65d84a51dd0092d2cdcd09908b2116dc267daf346d0a4c390",
+    "status": "BUILD_PASS_PENDING_DEPLOYMENT_QUALIFICATION",
+    "library_sha256": "8adc33059a98399cd8adea41de071598aaa2b09ff53eb3ae860cad0c6696b538",
+    "build_script_sha256": "cd0bb808d710cd933ff90af13952b1df92499473f61e5b45f41b2d54d9408090"
+  },
+  "portable_oracle": {
+    "canonical_receipt": "results/backend-integration/netcdf-owner-package-oracle.json",
+    "receipt_sha256": "bd12c9f9a018f5d0c1e28c2a9875224a9f037e6efe445344f3ff91d3ec5a3bd8",
+    "status": "PASS",
+    "library_sha256": "8adc33059a98399cd8adea41de071598aaa2b09ff53eb3ae860cad0c6696b538"
+  },
+  "portable_hdf_error_oracle": {
+    "canonical_receipt": "results/backend-integration/netcdf-owner-package-hdf-error-r1.json",
+    "receipt_sha256": "4d0d7879e628038efc3ee56dd2dc37315cf34014f730a01823d0b11ea951ae9f",
+    "status": "PASS",
+    "library_sha256": "8adc33059a98399cd8adea41de071598aaa2b09ff53eb3ae860cad0c6696b538"
+  },
+  "promotion_owner_disposition": "No unresolved owner correctness blockers in supported frozen contract; actual integrated final artifact work/science/performance qualification remains root-owned."
+}

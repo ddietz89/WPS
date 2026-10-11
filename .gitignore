@@ -13,3 +13,10 @@ grib2
 GRIBFILE.*
 *.o
 FILE:*
+# Optional Metgrid build-mode stamp and temporary strict configuration
+metgrid/src/.metgrid_backend_mode*
+.metgrid-config.*
+
+# Python build-helper cache
+__pycache__/
+*.pyc

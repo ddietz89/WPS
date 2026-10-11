@@ -1,6 +1,7 @@
 include ../../configure.wps
+include ../../arch/geogrid_simd.mk
 
-OBJS = cio.o wrf_debug.o bitarray_module.o constants_module.o module_stringutil.o geogrid.o gridinfo_module.o hash_module.o interp_module.o list_module.o llxy_module.o misc_definitions_module.o module_debug.o module_map_utils.o output_module.o parallel_module.o process_tile_module.o proc_point_module.o queue_module.o read_geogrid.o smooth_module.o source_data_module.o
+OBJS = cio.o wrf_debug.o bitarray_module.o constants_module.o module_stringutil.o geogrid.o gridinfo_module.o hash_module.o interp_module.o list_module.o llxy_module.o misc_definitions_module.o module_debug.o module_map_utils.o output_module.o parallel_module.o process_tile_module.o proc_point_module.o queue_module.o read_geogrid.o geogrid_decode_simd.o smooth_module.o source_data_module.o
 
 all:
 	clear ;
@@ -54,7 +55,11 @@ proc_point_module.o: bitarray_module.o hash_module.o interp_module.o llxy_module
 
 queue_module.o: module_debug.o
 
-read_geogrid.o:
+read_geogrid.o: read_geogrid.c
+	$(CC) $(CFLAGS) $(CPPFLAGS) $(GEOGRID_READER_FLAGS) -c $< -o $@
+
+geogrid_decode_simd.o: geogrid_decode_simd.c
+	$(CC) $(CFLAGS) $(CPPFLAGS) $(GEOGRID_SIMD_FLAGS) -c $< -o $@
 
 smooth_module.o: parallel_module.o
 

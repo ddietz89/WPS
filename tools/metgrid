@@ -1,0 +1,17 @@
+#!/usr/bin/env bash
+# Job-local lossless compression selection; no system loader changes.
+set -euo pipefail
+repo_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
+if [[ "${1:-}" == -- ]]; then shift; fi
+if [[ $# == 0 ]]; then set -- "$repo_dir/metgrid.exe"; fi
+
+if [[ "${WPS_USE_STOCK_ZLIB:-0}" == 1 ]]; then
+    exec "$@"
+fi
+zlib_ng_library="${WPS_ZLIB_NG_LIBRARY:-/pool/wrf-experiment/builds/cpu-investigation/zlib-ng/install/lib/libz.so.1.3.1.zlib-ng}"
+if [[ ! -f "$zlib_ng_library" ]]; then
+    echo "zlib-ng library missing: $zlib_ng_library" >&2
+    echo "Set WPS_ZLIB_NG_LIBRARY to a compatibility-mode library, or WPS_USE_STOCK_ZLIB=1." >&2
+    exit 1
+fi
+exec env LD_PRELOAD="$zlib_ng_library${LD_PRELOAD:+:$LD_PRELOAD}" "$@"

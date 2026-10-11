@@ -1,14 +1,41 @@
 # WPS preprocessing optimizations
 
-This branch adds three changes to the WPS 4.7.0 source baseline:
+This branch adds five source changes to the WPS 4.7.0 baseline and a job-local metgrid dependency selection:
 
 - Reuse packed bytes and unused bits in a per-call GBYTES reservoir for zero-skip, 1–31-bit extraction. Keep the original byte conversion and generic path for unsupported cases, with overflow guards.
 - Write contiguous ungrib slabs as whole array sections, avoiding scalar runtime transfers while preserving unformatted records. Keep the original path for strided slabs. This uses Fortran 2008 CONTIGUOUS and IS_CONTIGUOUS, checked with the configured GNU, AOCC and Intel compilers.
 - During metgrid mask discovery, read field headers but materialize only mask fields and their conservative table aliases. Audit file record envelopes before selection; uncertain or malformed files retain full reads. Normal processing reads are unchanged.
+- Decode eligible independent GRIB2 complex-packing groups with OpenMP, preserving the retained bit reservoir, original arithmetic and serial fallback for missing values or unsupported geometry. Ungrib defaults to four threads when OMP_NUM_THREADS is absent or empty; an explicit setting overrides it.
+
+- Decode eligible geogrid 1-/2-byte tiles with a separate SIMD conversion/scaling helper; retain original rounding, signed thresholds, alias guards and fallback.
+
+## Promoted geogrid SIMD reader
+
+The reader retains strict O2 compilation; only the separate helper uses strict O3, Zen2 targeting and SIMD-only directives. It creates no OpenMP teams or runtime dependency. GNU, clang/AOCC and Intel C flags follow the previous experiment. Set GEOGRID_SIMD_ARCH_FLAGS= for a generic CPU target, or supply another target; other compiler families can provide their own optimization flags.
+
+The prior source passed15,264 exact kernel/reader cases across GNU/AOCC/Intel and all12 stage outputs. Kernel gains were2.11–6.62x, but five stage pairs were mixed (three slower, two faster; median paired change+0.09%). The user directed promotion; an established whole-stage speedup is not claimed.
+
+## Promoted metgrid zlib-ng selection
+
+Use tools/metgrid to run the compiled metgrid executable with zlib-ng by default, or tools/metgrid -- mpirun <MPI options> ./metgrid.exe for MPI. The launcher preloads the library into that command and its children. It leaves other WPS invocations alone. The default shared-project path selects the existing tested compatibility library; WPS_ZLIB_NG_LIBRARY overrides its location. WPS_USE_STOCK_ZLIB=1 skips adding this preload and preserves caller-provided environment settings. Direct metgrid.exe invocation retains its normal linked-library selection.
+
+The dependency is official zlib-ng2.3.3, commit12731092979c6d07f42da27da673a9f6c7b13586, built with --zlib-compat. Existing library SHA256:5d69c44314f30e4a6f6c76ee26a454538f7e1b019afe5782e67a6b94ba794b64. No library binary is vendored or system zlib replaced. Build a separate compatibility prefix with the official configure/make flow when needed. HDF5 level2, shuffle and chunk shapes stay unchanged.
+
+Five prior16-rank stage pairs reduced wall14.7–22.1% (median17.7%), median CPU19.8%, with0.23% larger files; all12 outputs were exact. Two fixed16-core pipeline pairs showed2.6–11.1% additional wall reduction in the concurrent layout; all42 products passed. Those pipelines excluded the newly promoted geogrid reader and OpenMP default.
+
+The source/build integration, four-thread default and dependency launcher were promoted without a new build or test run at the user's request. Combined validation of all additions is pending.
+
+## Ungrib OpenMP build and runtime
+
+GNU and AOCC/flang builds select `-fopenmp`; Intel ifort/ifx builds select `-qopenmp`. The flags apply to ungrib's GRIB2 library, main program and executable links. Other WPS stages keep their existing build settings. Set `UNGRIB_OPENMP_FLAGS=` when invoking make for a serial build; other compilers can supply their own OpenMP flag through that variable.
+
+Use `OMP_NUM_THREADS=1` for serial decoding or another explicit value to override the four-thread default. Launchers that already export OMP_NUM_THREADS retain that choice. Allocate four physical cores per default ungrib process: three valid-time workers plus four-rank geogrid fit within sixteen cores using disjoint core sets.
+
+The independent-group implementation previously passed exact caller checks across GNU, AOCC and Intel and showed approximately1.9x kernel speedup at four threads. Its earlier warm ungrib stage pair improved wall time3.58% for36.4% moreCPU. The current four-thread default and build integration were included at the user's request without a new build or test run; the earlier integrated results below cover the original three retained changes, not this addition.
 
 ## Validation
 
-Committed source bytes match the tested integrated GNU build. Standalone actual-source correctness checks covered GNU 13.3, AOCC 5.2 and Intel 2025.3. These compare each compiler with its original implementation; they do not establish cross-compiler equality.
+The original three retained changes match the tested integrated GNU build. Standalone actual-source correctness checks covered GNU 13.3, AOCC 5.2 and Intel 2025.3. These compare each compiler with its original implementation; they do not establish cross-compiler equality.
 
 The integrated GNU three-time, 1500 x 1140 Lambert case passed all seven exact scientific product comparisons against a fresh control; the control also passed against the established reference (14 comparisons). A subsequent concurrent pipeline using these same sources passed all seven product comparisons against that reference. Checks include field values and scientific metadata; numerical tolerances were not relaxed.
 

@@ -12,6 +12,9 @@
 #include <stdlib.h>
 #include <stdio.h>
 #include <string.h>
+#include <stdint.h>
+
+void wps_geogrid_decode12(const unsigned char * src, float * dst, size_t n, int wordsize, int signedness, int endian, float scale);
 
 #ifdef _UNDERSCORE
 #define read_geogrid read_geogrid_
@@ -86,6 +89,48 @@ int read_geogrid(
       B2 = 0; A2 = 1;
       C3 = 0; B3 = 1; A3 = 2;
       D4 = 0; C4 = 1; B4 = 2; A4 = 3;
+   }
+
+
+   {
+      size_t output_bytes;
+      uintptr_t out_base;
+      uintptr_t p;
+      int alias;
+
+      alias = 0;
+
+      if (narray > 0 && (*wordsize == 1 || *wordsize == 2) &&
+          narray <= (size_t)(SIZE_MAX / sizeof(float)) &&
+          cnt == narray * (size_t)(*wordsize)) {
+         output_bytes = narray * sizeof(float);
+         out_base = (uintptr_t)(void *)rarray;
+
+         p = (uintptr_t)(void *)len;
+         alias |= (p >= out_base) ? ((p - out_base) < output_bytes) : ((out_base - p) < sizeof(*len));
+         p = (uintptr_t)(void *)nx;
+         alias |= (p >= out_base) ? ((p - out_base) < output_bytes) : ((out_base - p) < sizeof(*nx));
+         p = (uintptr_t)(void *)ny;
+         alias |= (p >= out_base) ? ((p - out_base) < output_bytes) : ((out_base - p) < sizeof(*ny));
+         p = (uintptr_t)(void *)nz;
+         alias |= (p >= out_base) ? ((p - out_base) < output_bytes) : ((out_base - p) < sizeof(*nz));
+         p = (uintptr_t)(void *)isigned;
+         alias |= (p >= out_base) ? ((p - out_base) < output_bytes) : ((out_base - p) < sizeof(*isigned));
+         p = (uintptr_t)(void *)endian;
+         alias |= (p >= out_base) ? ((p - out_base) < output_bytes) : ((out_base - p) < sizeof(*endian));
+         p = (uintptr_t)(void *)scalefactor;
+         alias |= (p >= out_base) ? ((p - out_base) < output_bytes) : ((out_base - p) < sizeof(*scalefactor));
+         p = (uintptr_t)(void *)wordsize;
+         alias |= (p >= out_base) ? ((p - out_base) < output_bytes) : ((out_base - p) < sizeof(*wordsize));
+         p = (uintptr_t)(void *)status;
+         alias |= (p >= out_base) ? ((p - out_base) < output_bytes) : ((out_base - p) < sizeof(*status));
+
+         if (!alias) {
+            wps_geogrid_decode12(c, rarray, narray, *wordsize, *isigned, *endian, *scalefactor);
+            free(c);
+            return 0;
+         }
+      }
    }
 
    /* Convert words from native byte order */

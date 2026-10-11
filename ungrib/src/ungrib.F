@@ -51,6 +51,7 @@ program ungrib
   use module_debug
   use misc_definitions_module
   use stringutil
+!$ use omp_lib, only: omp_set_num_threads
 
   implicit none
 
@@ -109,7 +110,12 @@ program ungrib
   logical :: ordered_by_date
   integer :: grib_version
   integer :: vtable_columns
+!$ integer :: omp_env_length, omp_env_status
 
+
+  ! Four decode threads by default; an explicit OMP_NUM_THREADS wins.
+!$ call get_environment_variable('OMP_NUM_THREADS', length=omp_env_length, status=omp_env_status)
+!$ if (omp_env_length.eq.0) call omp_set_num_threads(4)
 
   call mprintf(.true.,STDOUT,' *** Starting program ungrib.exe *** ')
   call mprintf(.true.,LOGFILE,' *** Starting program ungrib.exe *** ')

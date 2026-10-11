@@ -1,4 +1,7 @@
 include $(DEV_TOP)/configure.wps
+include $(DEV_TOP)/arch/ungrib_openmp.mk
+
+F77FLAGS += $(UNGRIB_OPENMP_FLAGS)
 
 #  Make sure one of the following options appears in your CFLAGS
 #  variable to indicate which system you are on.  Used to call

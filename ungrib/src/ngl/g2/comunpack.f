@@ -54,6 +54,10 @@
       real :: ref,bscale,dscale,rmiss1,rmiss2
 !      real :: fldo(6045)
       integer :: totBit, totLen
+      logical :: group_fast
+      integer,allocatable :: group_n(:),group_bit(:)
+      integer(kind=8) :: points8,end8,limit8,length8,width8
+      integer :: group_cursor,group_offset
 
       ier=0
       !print *,'IDRSTMPL: ',(idrstmpl(j),j=1,16)
@@ -199,6 +203,67 @@
 !  For each group, unpack data values
 !
       if ( idrstmpl(7).eq.0 ) then        ! no missing values
+         group_fast=.false.
+         if (bit_size(0).eq.32 .and. ngroups.ge.256 .and.
+     &       ndpts.ge.65536 .and.
+     &       ndpts.lt.huge(0) .and. iofst.ge.0 .and. len.ge.0) then
+           points8=0_8
+           end8=int(iofst,8)
+           limit8=min(int(len,8)*8_8,int(huge(0),8))
+           group_fast=end8.le.limit8
+           do j=1,ngroups
+             if (.not.group_fast) exit
+             length8=int(glen(j),8)
+             width8=int(gwidth(j),8)
+             if (length8.le.0_8 .or. width8.lt.0_8 .or.
+     &           width8.gt.32_8) then
+               group_fast=.false.
+               exit
+             endif
+             points8=points8+length8
+             if (points8.gt.int(ndpts,8)) then
+               group_fast=.false.
+               exit
+             endif
+             end8=end8+width8*length8
+             if (end8.gt.limit8) then
+               group_fast=.false.
+               exit
+             endif
+           enddo
+           if (points8.ne.int(ndpts,8)) group_fast=.false.
+         endif
+         if (group_fast) then
+           allocate(group_n(ngroups),group_bit(ngroups))
+           n=1
+           group_offset=iofst
+           do j=1,ngroups
+             group_n(j)=n
+             group_bit(j)=group_offset
+             n=n+glen(j)
+             group_offset=group_offset+gwidth(j)*glen(j)
+           enddo
+!$omp parallel do default(none) schedule(static)
+!$omp& shared(ngroups,cpack,ifld,gwidth,glen,gref,group_n,
+!$omp& group_bit) private(j,k,group_cursor,group_offset)
+           do j=1,ngroups
+             group_cursor=group_n(j)
+             group_offset=group_bit(j)
+             if (gwidth(j).ne.0) then
+               call gbytes(cpack,ifld(group_cursor),group_offset,
+     &                     gwidth(j),0,glen(j))
+               do k=1,glen(j)
+                 ifld(group_cursor)=ifld(group_cursor)+gref(j)
+                 group_cursor=group_cursor+1
+               enddo
+             else
+               ifld(group_cursor:group_cursor+glen(j)-1)=gref(j)
+             endif
+           enddo
+!$omp end parallel do
+           iofst=int(end8)
+           deallocate(group_n,group_bit)
+         else
          n=1
          do j=1,ngroups
          !write(78,*)'NGP ',j,gwidth(j),glen(j),gref(j)
@@ -214,6 +279,7 @@
            endif
            iofst=iofst+(gwidth(j)*glen(j))
          enddo
+         endif
       elseif ( idrstmpl(7).eq.1.OR.idrstmpl(7).eq.2 ) then
          ! missing values included
          allocate(ifldmiss(ndpts))

@@ -1,4 +1,7 @@
 include ../../configure.wps
+include ../../arch/ungrib_openmp.mk
+
+LDFLAGS += $(UNGRIB_OPENMP_FLAGS)
 
 LIBTARGET	=	pgu
 EXE		=	ungrib.exe \
@@ -13,6 +16,8 @@ OBJS2		=	build_hdate.o geth_newdate.o geth_idts.o swap.o table.o module_stringut
 			parse_table.o gbytesys.o gribcode.o read_namelist.o cio.o
 
 all:			lib$(LIBTARGET).a $(EXE)
+
+ungrib.o: FFLAGS += $(UNGRIB_OPENMP_FLAGS)
 
 ungrib.exe:		$(OBJS1) lib$(LIBTARGET).a
 			$(RM) $@

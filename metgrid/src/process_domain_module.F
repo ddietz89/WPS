@@ -2806,6 +2806,9 @@ integer, parameter :: BDR_WIDTH = 3
       use module_debug
       use module_mergesort
       use storage_module
+#ifdef _METGRID
+      use bitarray_module, only: bitarray_all_valid_rect
+#endif
    
       implicit none
 
@@ -2814,6 +2817,10 @@ integer, parameter :: BDR_WIDTH = 3
    
       ! Local variables
       integer :: i, ii, j, ix, jx, k, lower, upper, temp, istatus
+#ifdef _METGRID
+      integer(kind=selected_int_kind(18)) :: nx_req, ny_req
+      logical :: all_valid_rect
+#endif
       integer, pointer, dimension(:) :: union_levels, field_levels
       real, pointer, dimension(:) :: r_union_levels
       character (len=128) :: clevel
@@ -2922,6 +2929,24 @@ integer, parameter :: BDR_WIDTH = 3
                   search_field%header%vertical_level = field_levels(k)
                   call storage_get_field(search_field,istatus) 
                   if (istatus == 0) then
+#ifdef _METGRID
+                     all_valid_rect = .false.
+                     if (bit_size(0) == 32) then
+                        if (associated(search_field%valid_mask)) then
+                           nx_req = int(search_field%header%dim1(2),kind=selected_int_kind(18)) &
+                                  - int(search_field%header%dim1(1),kind=selected_int_kind(18)) + 1
+                           ny_req = int(search_field%header%dim2(2),kind=selected_int_kind(18)) &
+                                  - int(search_field%header%dim2(1),kind=selected_int_kind(18)) + 1
+                           if (nx_req > 0 .and. ny_req > 0 .and. &
+                               nx_req <= int(huge(0),kind=selected_int_kind(18)) .and. &
+                               ny_req <= int(huge(0),kind=selected_int_kind(18))) then
+                              all_valid_rect = bitarray_all_valid_rect(search_field%valid_mask, &
+                                                                      int(nx_req), int(ny_req))
+                           end if
+                        end if
+                     end if
+                     if (.not. all_valid_rect) then
+#endif
                      JLOOP: do jx=search_field%header%dim2(1),search_field%header%dim2(2)
                         ILOOP: do ix=search_field%header%dim1(1),search_field%header%dim1(2)
                            if (.not. bitarray_test(search_field%valid_mask, &
@@ -2963,6 +2988,9 @@ integer, parameter :: BDR_WIDTH = 3
                            end if
                         end do ILOOP
                      end do JLOOP
+#ifdef _METGRID
+                     end if
+#endif
                   else
                      call mprintf(.true.,ERROR, &
                                   'This is bad, could not get %s at level %i.', &

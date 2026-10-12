@@ -57,6 +57,7 @@ target_sources(
                   simunpack.f
                   reduce.f
                   comunpack.f
+                  groupavx2.c
                   specunpack.f
                   jpcunpack.F
                   dec_jpeg2000.c

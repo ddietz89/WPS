@@ -365,13 +365,13 @@
       !print *,'SAGT: ',ref,bscale,dscale
       if ( idrstmpl(7).eq.0 ) then        ! no missing values
          if ( ndpts.ge.65536 ) then
-!$omp parallel do default(none) schedule(static)
+!$omp parallel do simd default(none) schedule(static)
 !$omp& shared(ndpts,ifld,fld,bscale,ref,dscale) private(n)
          do n=1,ndpts
             fld(n)=((real(ifld(n))*bscale)+ref)*dscale
             !write(78,*)'SAG ',n,fld(n),ifld(n),bscale,ref,1./dscale
          enddo
-!$omp end parallel do
+!$omp end parallel do simd
          else
          do n=1,ndpts
             fld(n)=((real(ifld(n))*bscale)+ref)*dscale

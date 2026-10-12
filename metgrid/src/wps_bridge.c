@@ -45,14 +45,56 @@ static void mpi_check(wps_chunk_session *s,int e){if(e!=MPI_SUCCESS)MPI_Abort(s-
 static int agree(wps_chunk_session *s,int bad){int out;mpi_check(s,MPI_Allreduce(&bad,&out,1,MPI_INT,MPI_MAX,s->comm));return out;}
 static void release_result(void *p){result_storage *s=p;if(s){free(s->blob);free(s);}}
 static int multiply(size_t a,size_t b,size_t *out){if(b&&a>SIZE_MAX/b)return 0;*out=a*b;return 1;}
+static unsigned char *rx_cache_ptr;
+static size_t rx_cache_capacity;
+static unsigned char *shuf_cache_ptr;
+static size_t shuf_cache_capacity;
+static unsigned char *comp_cache_ptr;
+static size_t comp_cache_capacity;
+static int rank_scratch_leased;
+
+#define RANK_SCRATCH_CAP (256u*1024u*1024u)
+
+/* Take a fresh owned allocation for one scratch role; caller frees on every path. */
+static unsigned char *rank_scratch_fresh(size_t need){
+ unsigned char *p=malloc(need?need:1);
+ return p;
+}
+
+/* Borrow process-local cached scratch if capacity suffices, else own a fresh
+   malloc. *owned tells the caller which release path to use. Request above
+   RANK_SCRATCH_CAP always uses owned fresh malloc; cache untouched. */
+static unsigned char *rank_scratch_get(unsigned char **cache,size_t *cap,size_t need,int *owned,int *bad){
+ unsigned char *p=NULL;
+ if(!need)need=1;
+ if(need>RANK_SCRATCH_CAP){p=rank_scratch_fresh(need);*owned=1;*bad=!p;return p;}
+ if(*cap<need){
+  unsigned char *fresh=rank_scratch_fresh(need);
+  if(!fresh){*owned=0;*bad=1;return NULL;}
+  free(*cache);*cache=fresh;*cap=need;
+ }
+ *owned=0;*bad=0;return *cache;
+}
+
+/* Release a role's buffer: owned fresh frees immediately; borrowed cache stays. */
+static void rank_scratch_put(unsigned char *owned_ptr,unsigned char **cache,size_t *cap,int owned){
+ if(owned){free(owned_ptr);(void)cache;(void)cap;}
+}
+
 int wps_chunk_workspace_clear(void){
 #ifdef WPS_OPENMP_FUNNELED
  /* Reject worker entry before touching cache; FUNNELED main thread only. */
  if(!wps_omp_main_thread())return NC_EINVAL;
 #endif
  if(workspace_leased)return NC_EINVAL;
- free(workspace_ptr);workspace_ptr=NULL;workspace_capacity=0;return NC_NOERR;
+ if(rank_scratch_leased)return NC_EINVAL;
+ free(workspace_ptr);workspace_ptr=NULL;workspace_capacity=0;
+ free(rx_cache_ptr);rx_cache_ptr=NULL;rx_cache_capacity=0;
+ free(shuf_cache_ptr);shuf_cache_ptr=NULL;shuf_cache_capacity=0;
+ free(comp_cache_ptr);comp_cache_ptr=NULL;comp_cache_capacity=0;
+ return NC_NOERR;
 }
+
 int wps_chunk_session_create(MPI_Fint fcomm,int root,const char *field,int eligible,wps_chunk_session **out){
 #ifdef WPS_OPENMP_FUNNELED
  /* Reject worker entry before any MPI call; FUNNELED allows only main thread. */
@@ -128,10 +170,20 @@ static int batch_work(wps_chunk_session *s,nc_precompressed_float_layout *l,unsi
  unsigned char *recv=NULL,*shuffle=NULL,*compressed=NULL;result_storage *storage=NULL;
  unsigned long long lengths[4]={0},all_lengths[16]={0};
  int send_counts[4]={0},send_disps[4]={0};size_t local_used=0,total_used=0;
+ int recv_owned=0,shuffle_owned=0,compressed_owned=0,lease_acquired=0,alloc_bad=0;
  for(size_t c=0;c<l->batch_count;c++){int rank=(int)((l->batch_first+c)%(size_t)s->size);owners[c]=rank;raw_counts[rank]+=(int)chunk_bytes;if(rank==s->rank)local_ids[local_count++]=c;}
  for(int r=1;r<s->size;r++)raw_disps[r]=raw_disps[r-1]+raw_counts[r-1];
- int bad=chunk_bytes>ULONG_MAX||bound<chunk_bytes||!multiply(bound,(size_t)local_count,&local_capacity)||local_capacity>INT_MAX;
- if(!bad){recv=malloc(raw_counts[s->rank]?raw_counts[s->rank]:1);shuffle=malloc(chunk_bytes);compressed=malloc(local_capacity?local_capacity:1);bad=!recv||!shuffle||!compressed;}
+ int bad=chunk_bytes>ULONG_MAX||bound<chunk_bytes||!multiply(bound,(size_t)local_count,&local_capacity)||local_capacity>INT_MAX||rank_scratch_leased;
+ if(!bad){rank_scratch_leased=1;lease_acquired=1;}
+ if(!bad){
+  recv=rank_scratch_get(&rx_cache_ptr,&rx_cache_capacity,raw_counts[s->rank]?raw_counts[s->rank]:1,&recv_owned,&alloc_bad);bad=alloc_bad;
+ }
+ if(!bad){
+  shuffle=rank_scratch_get(&shuf_cache_ptr,&shuf_cache_capacity,chunk_bytes,&shuffle_owned,&alloc_bad);bad=alloc_bad;
+ }
+ if(!bad){
+  compressed=rank_scratch_get(&comp_cache_ptr,&comp_cache_capacity,local_capacity?local_capacity:1,&compressed_owned,&alloc_bad);bad=alloc_bad;
+ }
  if(agree(s,bad)){rc=NC_ENOMEM;goto cleanup;}
  mpi_check(s,MPI_Scatterv(packed,raw_counts,raw_disps,MPI_BYTE,recv,raw_counts[s->rank],MPI_BYTE,s->root,s->comm));
  bad=0;
@@ -162,7 +214,11 @@ static int batch_work(wps_chunk_session *s,nc_precompressed_float_layout *l,unsi
  }
  rc=NC_NOERR;
 cleanup:
- free(recv);free(shuffle);free(compressed);release_result(storage);return rc;
+ if(lease_acquired)rank_scratch_leased=0;
+ rank_scratch_put(recv,&rx_cache_ptr,&rx_cache_capacity,recv_owned);
+ rank_scratch_put(shuffle,&shuf_cache_ptr,&shuf_cache_capacity,shuffle_owned);
+ rank_scratch_put(compressed,&comp_cache_ptr,&comp_cache_capacity,compressed_owned);
+ release_result(storage);return rc;
 }
 int wps_chunk_provider(const nc_precompressed_float_layout *layout,const void *raw,size_t bytes,nc_precompressed_float_batch *result,void *user){
  wps_chunk_session *s=user;size_t chunk_bytes=0;unsigned char *packed=NULL;

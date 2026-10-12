@@ -30,14 +30,32 @@ override OBJS += wps_bridge.o wps_registration.o
 override WRF_LIB := -L$(METGRID_PRECOMPRESSED_NETCDF_PREFIX)/lib $(WRF_LIB) -lz
 endif
 
+# Optional reviewed row threading. The default preserves the original MPI/flags.
+METGRID_OPENMP_MODE := 0
+ifeq ($(strip $(WPS_METGRID_OPENMP)),1)
+ifeq ($(strip $(METGRID_PRECOMPRESSED_NETCDF_PREFIX)),)
+$(error WPS_METGRID_OPENMP=1 requires the provider-enabled Metgrid build)
+endif
+METGRID_OPENMP_MODE := 1
+override CPPFLAGS += -DWPS_OPENMP_FUNNELED
+override FFLAGS += -fopenmp -frecursive
+override LDFLAGS += -fopenmp
+else ifneq ($(strip $(WPS_METGRID_OPENMP)),)
+ifneq ($(strip $(WPS_METGRID_OPENMP)),0)
+$(error WPS_METGRID_OPENMP must be unset, 0, or 1)
+endif
+endif
+
 # Recompile this small module when switching between normal and provider builds.
 # Recursive WPS make can override flags; the prefix records the selected mode.
 .PHONY: metgrid_backend_mode_force
 .metgrid_backend_mode: metgrid_backend_mode_force
-	@printf '%s\n' '$(METGRID_PRECOMPRESSED_NETCDF_PREFIX)' > $@.tmp
+	@printf '%s\n' '$(METGRID_PRECOMPRESSED_NETCDF_PREFIX)' '$(METGRID_OPENMP_MODE)' > $@.tmp
 	@cmp -s $@.tmp $@ || cp $@.tmp $@
 	@rm -f $@.tmp
-output_module.o: .metgrid_backend_mode
+# Mode transitions must rebuild every routine that can execute concurrently,
+# including modules shared with Geogrid (objects here are Metgrid-local).
+module_map_utils.o bitarray_module.o queue_module.o llxy_module.o interp_module.o process_domain_module.o parallel_module.o output_module.o: .metgrid_backend_mode
 wps_bridge.o wps_registration.o: .metgrid_backend_mode netcdf_precompressed.h
 
 all: 

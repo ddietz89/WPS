@@ -44,13 +44,30 @@ include 'mpif.h'
 #ifdef _MPI
       integer :: mpi_rank, mpi_size
       integer :: mpi_ierr
+#if defined(WPS_OPENMP_FUNNELED) && defined(_METGRID)
+      integer :: mpi_thread_provided
+#endif
       integer, dimension(2) :: dims, coords
       integer :: rectangle, myleft, myright, mytop, mybottom
       integer :: mini, m, n
       logical, dimension(2) :: periods
   
       ! Find out our rank and the total number of processors
+#if defined(WPS_OPENMP_FUNNELED) && defined(_METGRID)
+      ! MPI/NC/HDF calls stay on the initial thread, outside OpenMP regions.
+      call MPI_Init_thread(MPI_THREAD_FUNNELED, mpi_thread_provided, mpi_ierr)
+      if (mpi_ierr /= MPI_SUCCESS) then
+         write(*,*) 'MPI_Init_thread failed, error=', mpi_ierr
+         stop 1
+      end if
+      if (mpi_thread_provided /= MPI_THREAD_FUNNELED) then
+         write(*,*) 'WPS requires exactly MPI_THREAD_FUNNELED; provided=', mpi_thread_provided
+         call MPI_Abort(MPI_COMM_WORLD, 1, mpi_ierr)
+         stop 1
+      end if
+#else
       call MPI_Init(mpi_ierr)
+#endif
       call MPI_Comm_rank(MPI_COMM_WORLD, mpi_rank, mpi_ierr)
       call MPI_Comm_size(MPI_COMM_WORLD, mpi_size, mpi_ierr)
 
@@ -58,6 +75,12 @@ include 'mpif.h'
 
       nprocs = mpi_size
       my_proc_id = mpi_rank
+#if defined(WPS_OPENMP_FUNNELED) && defined(_METGRID)
+      if (mpi_rank == IO_NODE) then
+         write(*,*) 'WPS OpenMP MPI thread support: required=', MPI_THREAD_FUNNELED, &
+                    'provided=', mpi_thread_provided
+      end if
+#endif
 
       ! Code from RSL to get number of procs in m and n directions
       mini = 2*nprocs

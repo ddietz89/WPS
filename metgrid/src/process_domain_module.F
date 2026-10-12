@@ -2268,6 +2268,9 @@ integer, parameter :: BDR_WIDTH = 3
       integer :: i, j, idx, idxt, orig_selected_proj, interp_mask_status, &
                  interp_land_mask_status, interp_water_mask_status, process_width
       integer, pointer, dimension(:) :: interp_array, interp_opts
+#ifdef WPS_OPENMP_FUNNELED
+      logical :: thread_rows
+#endif
       real :: rx, ry, temp
       real, pointer, dimension(:,:) :: data_count
       type (fg_input) :: mask_field, mask_water_field, mask_land_field
@@ -2516,6 +2519,16 @@ integer, parameter :: BDR_WIDTH = 3
 
          orig_selected_proj = iget_selected_domain()
          call select_domain(SOURCE_PROJ)
+#ifdef WPS_OPENMP_FUNNELED
+         thread_rows = .false.
+         if (proj_stack(current_nest_number)%init) then
+            thread_rows = proj_stack(current_nest_number)%code == PROJ_LATLON .and. &
+                          (istagger == M .or. istagger == U .or. &
+                           istagger == V .or. istagger == CORNER) .and. &
+                          masked(idx) /= MASKED_BOTH
+         end if
+         !$omp parallel do schedule(static) default(shared) private(i,temp) if(thread_rows)
+#endif
          do j=sm2,em2
             do i=sm1,em1
 
@@ -2609,6 +2622,9 @@ integer, parameter :: BDR_WIDTH = 3
 
             end do
          end do
+#ifdef WPS_OPENMP_FUNNELED
+         !$omp end parallel do
+#endif
          call select_domain(orig_selected_proj) 
       end if
 

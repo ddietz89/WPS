@@ -21,7 +21,7 @@ The build helper validates the provider symbols, uses a private configuration co
 
 ## Ownership and failures
 
-Every rank enters a matched per-field session. Rank 0 registers the provider only around one original WRF external write; other ranks receive WORK/DONE commands. Provider raw data is borrowed and immutable. Workers perform no NetCDF/HDF5 calls. MPI must use `MPI_THREAD_SINGLE` and the process main thread, as the qualified WPS initializer does.
+Every rank enters a matched per-field session. Rank 0 registers the provider only around one original WRF external write; other ranks receive WORK/DONE commands. Provider raw data is borrowed and immutable. Workers perform no NetCDF/HDF5 calls. The ordinary backend uses `MPI_THREAD_SINGLE` and the process main thread. The separately selected [row interpolation option](METGRID_OPENMP.md) uses `MPI_THREAD_FUNNELED`, with MPI and file ownership still confined to the initial thread.
 
 Only full eligible little-endian float32 records, supported fill and exactly shuffle/DEFLATE2 qualify. Chunk size is bounded at 64 MiB. An initial decline can use the ordinary write. Once any direct write is attempted, an error is terminal for that product: propagate it, end the scope, close for cleanup and discard the incomplete output. Never retry or accept a partial file. Root unregisters and sends DONE before the original fatal reporting. MPI transport failure aborts the job.
 

@@ -1,14 +1,34 @@
 # WPS optimization: findings and proposed next steps
 
-Updated 11 October 2026. This is the consolidated report; it supersedes older candidate promotion decisions, while preserving the scope of their original measurements.
+Updated 12 October 2026 UTC. This is the consolidated report; it supersedes older candidate promotion decisions, while preserving the scope of their original measurements.
 
 ## Current outcome
 
-The private WPS fork now includes six source improvements, a four-thread Ungrib default, and a launcher selecting compatible zlib-ng for Metgrid. The strongest measured improvements are concurrent processing of independent valid times and lossless output compression. Several source changes accelerate isolated kernels without a large or repeatable whole-stage gain.
+The private WPS fork includes the six earlier source improvements, a four-thread Ungrib default, the compatible zlib-ng launcher, the optional MPI compression backend, and now optional Metgrid row interpolation threads. The newest option defaults to four threads per rank when selected and reduced stage wall time by a median 11.94% in three matched pairs, using 22.01% more CPU. Several other changes accelerate isolated kernels without a large or repeatable whole-stage gain.
 
 The combined configuration now passes fresh short integration, including both rebuilt users of the shared interpolation source. All seven qualification products and all 28 products from four matched timing runs pass the pinned exact science and output-layout checks. The fresh 25-time pipeline also passes all 51 products. The separate five-time, three-hour cadence case passes all 11 products; the native 49-time combined case passes all 99 products against its independently established reference; a two-minute full-grid forecast resource probe completed. Historical timings below retain their original configuration scope.
 
 Production `/pool/wrf/WPS` remains a read-only reference. No production source or original scientific checker has been changed.
+
+The new row-threaded option has separate bounded acceptance below. Earlier 25/49-time pipeline and downstream results retain their original build scope.
+
+### Latest interpolation round
+
+A fresh profile of the promoted compression build measured 9.48–10.07 seconds of inclusive interpolation per rank, about 18% of a 56.24-second instrumented stage. The control ran in 52.30 seconds; both complete outputs were exact. This single diagnostic pair is not a speedup measurement, and inclusive phases must not be added.
+
+The optional row-threaded path preserves point arithmetic and partitions output rows for initialized latitude/longitude source grids. Other projections, average-gcell and `MASKED_BOTH` retain serial execution. Domain selection, MPI and file I/O remain on the main thread. Actual-module float/bitmap checks passed at 1/2/4 threads; MPI SINGLE/FUNNELED lifecycle and safe worker-entry rejection passed at 1/2/4 ranks.
+
+| Pair | Promoted backend control | Row-threaded candidate | Wall reduction |
+|---|---:|---:|---:|
+| 0 | 59.615 s | 50.709 s | 14.94% |
+| 1 | 53.782 s | 47.358 s | 11.94% |
+| 2 | 50.826 s | 47.931 s | 5.70% |
+
+Both arms used four MPI ranks and the same sixteen-core allocation on hpc02; the candidate used four interpolation threads per rank. All six complete outputs were byte-identical to the accepted science/layout reference, with positive provider proof and observed thread placement. Median wall reduction was 11.94%; median CPU increased 22.01%. Shared cache/load variation remains possible, but the final warm pair remained faster. The separate packaged executable and all eight concurrent-module objects matched the tested candidate bit for bit. A separate packaged launcher run at forecast time06 also passed complete byte identity, exact science/layout and provider checks; it verified inherited OMP_NUM_THREADS=1 was overridden to four. The actual build mode cycle restored both original and threaded executables bit for bit. Build and runtime selection are documented in `tools/METGRID_OPENMP.md`.
+
+The four-lane stencil SIMD candidate passed 1,170,000 bitwise comparisons and reduced representative large-grid kernel time by about 4–6%. Its stage pairs were 66.364/57.218, 58.832/54.369 and 54.340/54.642 seconds, all exact. The control warmed strongly and the final pair was 0.56% slower, so the observed median 7.59% reduction does not establish a reproducible warm stage benefit. It remains unpromoted; no additional timing matrix was run.
+
+SIMD implementation, row-threading implementation and independent MPI review were actually offloaded to DeepSeek in parallel under standing authorization. Returned code was reviewed locally; the first SIMD response was rejected and a single repaired response passed the strict arithmetic contract. All experiments and promotion builds used separate project checkouts. Next, profile the row-threaded build before considering coordinate reuse or other remaining interpolation overhead; retain the SIMD patch for a future measured opportunity.
 
 ## Baselines and measurement scope
 
@@ -202,6 +222,7 @@ All paths below are on hpc01 unless identified as fork files. They identify reta
 - Production packaging: `/pool/wrf-experiment/results/backend-integration/production-package-build-r1.json`, `netcdf-owner-package-oracle.json`, `netcdf-owner-package-hdf-error-r1.json`, `caller-readiness.json`.
 - Repeated-time and downstream backend acceptance: `/pool/wrf-experiment/results/next-round/metgrid-backend-cadence5-hpc01-r1.json`, `downstream-backend-cadence-short-hpc04-r1.json`; full25batch receipts use `metgrid-backend-full25-batch0` through `batch4`.
 - Actual backend integration: `/pool/wrf-experiment/results/next-round/metgrid-backend-integration-hpc01-oracle-r2.json` and its `-exact.json` companion; performance results use `metgrid-backend-integration-hpc01-performance`.
+- Latest interpolation round: `/pool/wrf-experiment/results/interpolation-round/profile.json`, `interpolation-openmp-stage-hpc02-r1.json`, `interpolation-simd-stage-hpc04-r1.json`, `openmp-stage-ready.json`, `thread-gate.json`, `openmp-package-build.json`, `openmp-package-mode-switch.json` and `interpolation-openmp-packaged-time06.json`. Local standalone drivers and receipts are retained under `investigation/interpolation-round/` in the experiment workspace.
 - Parallel compression: `metgrid-parallel-compression-hpc04-r1.json` and its `-provenance.json` supplement under that root.
 - Bounded source evidence in the local investigation workspace: `metgrid-training-gather/RESULTS.md`, `metgrid-point-batch/RESULTS.md`, `ungrib-avx2-next-round.md`, `metgrid-parallel-compression/RESULTS.md`, `BACKEND-NEXT-PROOF.md` and `LIVE-OWNER-REVIEW.md`.
 - Downstream: `downstream-baseline-short-hpc04.json`, `downstream-combined-short-hpc04.json`, `downstream-forecast-memory-probe-hpc04-r2.json` under that root.

@@ -60,3 +60,7 @@ The previously qualified combined build passed full 25-time WPS acceptance and s
 ## Optional parallel compression backend
 
 The opt-in MPI compression backend and its reproducible NetCDF owner extension are described in [tools/METGRID_PARALLEL_COMPRESSION.md](tools/METGRID_PARALLEL_COMPRESSION.md). Ordinary builds retain synchronous output. The backend uses 2 or 4 MPI ranks; other rank counts fall back. Matched four-core short-stage measurements reduced wall time 18.98–29.74%, median29.70%, with exact outputs. Deployment scope, multi-time/downstream acceptance, library identities and rollback are recorded in OPTIMIZATION_FINDINGS.md.
+
+## Optional Metgrid row interpolation threads
+
+The [row interpolation option](tools/METGRID_OPENMP.md) uses four threads per MPI rank while keeping MPI and file I/O on the main thread. Three alternating pairs against the promoted compression backend reduced stage wall time 5.70–14.94%, median 11.94%, with all six outputs exact. Median CPU increased 22.01%. Both arms received the same sixteen-core allocation; the original used fewer active interpolation threads. The option is explicit at build and launch, and leaves ordinary builds unchanged. The separately investigated four-lane stencil SIMD helper remains unpromoted because its final warm stage pair showed no gain.

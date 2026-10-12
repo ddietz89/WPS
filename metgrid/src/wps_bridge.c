@@ -1,3 +1,6 @@
+#ifndef _GNU_SOURCE
+#define _GNU_SOURCE
+#endif
 /* Codex local implementation after bounded hosted dispatch rejection. */
 #include <mpi.h>
 #include <zlib.h>
@@ -12,6 +15,16 @@
 #include <fcntl.h>
 #include <inttypes.h>
 #include "netcdf_precompressed.h"
+#ifdef WPS_OPENMP_FUNNELED
+#include <sys/syscall.h>
+static int wps_omp_main_thread(void) {
+#ifdef __linux__
+ return syscall(SYS_gettid) == (long)getpid();
+#else
+ return 0;
+#endif
+}
+#endif
 #define MAGIC 0x57505343u
 #define WORK 1
 #define DONE 2
@@ -28,11 +41,21 @@ static int agree(wps_chunk_session *s,int bad){int out;mpi_check(s,MPI_Allreduce
 static void release_result(void *p){result_storage *s=p;if(s){free(s->blob);free(s);}}
 static int multiply(size_t a,size_t b,size_t *out){if(b&&a>SIZE_MAX/b)return 0;*out=a*b;return 1;}
 int wps_chunk_session_create(MPI_Fint fcomm,int root,const char *field,int eligible,wps_chunk_session **out){
+#ifdef WPS_OPENMP_FUNNELED
+ /* Reject worker entry before any MPI call; FUNNELED allows only main thread. */
+ if(!wps_omp_main_thread())return NC_EINVAL;
+#endif
  wps_chunk_session temp;memset(&temp,0,sizeof temp);temp.comm=MPI_Comm_f2c(fcomm);
  
  mpi_check(&temp,MPI_Comm_rank(temp.comm,&temp.rank));mpi_check(&temp,MPI_Comm_size(temp.comm,&temp.size));
  int level,main_thread;mpi_check(&temp,MPI_Query_thread(&level));mpi_check(&temp,MPI_Is_thread_main(&main_thread));
- int bad=!out||root!=0||!field||(field&&strlen(field)>127)||level!=MPI_THREAD_SINGLE||!main_thread;if(agree(&temp,bad))return NC_EINVAL;*out=NULL;
+ int bad=!out||root!=0||!field||(field&&strlen(field)>127)||
+#ifdef WPS_OPENMP_FUNNELED
+ (level!=MPI_THREAD_SINGLE&&level!=MPI_THREAD_FUNNELED)||
+#else
+ level!=MPI_THREAD_SINGLE||
+#endif
+ !main_thread;if(agree(&temp,bad))return NC_EINVAL;*out=NULL;
  char name[128]={0};if(temp.rank==root)memcpy(name,field,strlen(field)+1);
  mpi_check(&temp,MPI_Bcast(name,128,MPI_CHAR,root,temp.comm));
  int low,high;eligible=!!eligible;

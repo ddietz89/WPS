@@ -1,6 +1,9 @@
 module storage_module
 
    use datatype_module
+#ifdef _METGRID
+   use bitarray_module, only: bitarray_all_valid_rect
+#endif
    use minheap_module
    use misc_definitions_module
    use module_debug
@@ -1046,6 +1049,11 @@ call mprintf(.true.,WARN,'PLEASE REPORT THIS BUG TO THE DEVELOPER!')
       ! Local variables
       integer :: i, j
       logical :: found_missing
+#ifdef _METGRID
+      integer, parameter :: rect_kind = selected_int_kind(18)
+      integer(kind=rect_kind) :: rect_nx, rect_ny
+      logical :: rect_all_valid
+#endif
       type (head_node), pointer :: name_cursor
       type (data_node), pointer :: data_cursor
 
@@ -1062,6 +1070,21 @@ call mprintf(.true.,WARN,'PLEASE REPORT THIS BUG TO THE DEVELOPER!')
                                'Field %s does not have a valid mask and will not be checked for missing values', &
                                s1=data_cursor%fg_data%header%field)
                else
+#ifdef _METGRID
+                  rect_all_valid = .false.
+                  if (bit_size(0) == 32) then
+                     rect_nx = int(data_cursor%fg_data%header%dim1(2),rect_kind) - &
+                               int(data_cursor%fg_data%header%dim1(1),rect_kind) + 1
+                     rect_ny = int(data_cursor%fg_data%header%dim2(2),rect_kind) - &
+                               int(data_cursor%fg_data%header%dim2(1),rect_kind) + 1
+                     if (rect_nx > 0 .and. rect_nx <= int(huge(0),rect_kind) .and. &
+                         rect_ny > 0 .and. rect_ny <= int(huge(0),rect_kind)) then
+                        rect_all_valid = bitarray_all_valid_rect(data_cursor%fg_data%valid_mask, &
+                                                               int(rect_nx), int(rect_ny))
+                     end if
+                  end if
+                  if (.not. rect_all_valid) then
+#endif
                   ILOOP: do i=1,data_cursor%fg_data%header%dim1(2)-data_cursor%fg_data%header%dim1(1)+1
                   JLOOP: do j=1,data_cursor%fg_data%header%dim2(2)-data_cursor%fg_data%header%dim2(1)+1
                      if (.not. bitarray_test(data_cursor%fg_data%valid_mask,i,j)) then
@@ -1075,6 +1098,9 @@ call mprintf(.true.,WARN,'PLEASE REPORT THIS BUG TO THE DEVELOPER!')
                      end if
                   end do JLOOP
                   end do ILOOP
+#ifdef _METGRID
+                  end if
+#endif
                end if
                data_cursor => data_cursor%next
             end do

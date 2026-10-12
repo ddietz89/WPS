@@ -9,8 +9,25 @@ override CPPFLAGS += -D_METGRID
 OBJS = cio.o wrf_debug.o bitarray_module.o constants_module.o datatype_module.o module_stringutil.o gridinfo_module.o metgrid.o input_module.o interp_module.o interp_option_module.o list_module.o llxy_module.o met_data_module.o minheap_module.o misc_definitions_module.o module_date_pack.o module_debug.o module_map_utils.o module_mergesort.o output_module.o parallel_module.o process_domain_module.o queue_module.o read_met_module.o rotate_winds_module.o storage_module.o write_met_module.o scan_input.o mpas_mesh.o target_mesh.o remapper.o
 
 
-# Optional NetCDF-owned parallel compression; an ordinary build retains WRF I/O.
-# Set an absolute prefix containing the patched NetCDF-C 4.9.2 installation.
+# Qualified MPI/NetCDF builds default to the reviewed compression owner.
+# Explicitly set WPS_METGRID_PRECOMPRESSED=0 for the original WRF I/O build.
+WPS_METGRID_PRECOMPRESSED ?= 1
+ifneq ($(strip $(WPS_METGRID_PRECOMPRESSED)),0)
+ifneq ($(strip $(WPS_METGRID_PRECOMPRESSED)),1)
+$(error WPS_METGRID_PRECOMPRESSED must be 0 or 1)
+endif
+endif
+ifeq ($(strip $(WPS_METGRID_PRECOMPRESSED)),0)
+override METGRID_PRECOMPRESSED_NETCDF_PREFIX :=
+else
+ifneq ($(filter -D_MPI,$(CPPFLAGS)),)
+ifneq ($(filter -DIO_NETCDF,$(CPPFLAGS)),)
+METGRID_PRECOMPRESSED_NETCDF_PREFIX ?= /pool/wrf-experiment/builds/backend-integration/netcdf-owner-package-r1/install
+endif
+endif
+endif
+
+# Set an absolute prefix to use a different provider installation.
 ifneq ($(strip $(METGRID_PRECOMPRESSED_NETCDF_PREFIX)),)
 ifneq ($(filter /%,$(strip $(METGRID_PRECOMPRESSED_NETCDF_PREFIX))),$(strip $(METGRID_PRECOMPRESSED_NETCDF_PREFIX)))
 $(error METGRID_PRECOMPRESSED_NETCDF_PREFIX must be absolute)
@@ -30,7 +47,13 @@ override OBJS += wps_bridge.o wps_registration.o
 override WRF_LIB := -L$(METGRID_PRECOMPRESSED_NETCDF_PREFIX)/lib $(WRF_LIB) -lz
 endif
 
-# Optional reviewed row threading. The default preserves the original MPI/flags.
+# Provider builds default to four-thread-capable row interpolation.
+# Non-provider builds preserve the original MPI/flags.
+ifneq ($(strip $(METGRID_PRECOMPRESSED_NETCDF_PREFIX)),)
+WPS_METGRID_OPENMP ?= 1
+else
+WPS_METGRID_OPENMP ?= 0
+endif
 METGRID_OPENMP_MODE := 0
 ifeq ($(strip $(WPS_METGRID_OPENMP)),1)
 ifeq ($(strip $(METGRID_PRECOMPRESSED_NETCDF_PREFIX)),)

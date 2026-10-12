@@ -1,12 +1,6 @@
 #!/usr/bin/env bash
-# Explicit opt-in launcher for the separately built threaded Metgrid candidate.
+# Compatibility alias: row threading is now the default accelerated launcher mode.
 set -euo pipefail
 repo_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
-threads="${WPS_METGRID_OPENMP_THREADS:-4}"
-[[ "$threads" =~ ^[1-9][0-9]*$ ]] || { echo "WPS_METGRID_OPENMP_THREADS must be positive." >&2; exit 2; }
-# Override MPI environment defaults such as OMP_NUM_THREADS=1.
-export OMP_NUM_THREADS="$threads"
-export OMP_DYNAMIC="${OMP_DYNAMIC:-FALSE}"
-export OMP_PLACES="${OMP_PLACES:-cores}"
-export OMP_PROC_BIND="${OMP_PROC_BIND:-close}"
+export WPS_METGRID_OPENMP=1
 exec "$repo_dir/tools/metgrid" "$@"

@@ -1,6 +1,6 @@
-# Optional Metgrid row interpolation threads
+# Default Metgrid row interpolation threads
 
-This option parallelizes independent output rows for initialized latitude/longitude source grids, mass/U/V/corner staggering, and the non-average-gcell interpolation path. `MASKED_BOTH` and other projections retain serial execution. Arithmetic and the order of operations within each point are unchanged. Each row owns separate field values and bitmap words.
+The default accelerated build parallelizes independent output rows for initialized latitude/longitude source grids, mass/U/V/corner staggering, and the non-average-gcell interpolation path. `MASKED_BOTH` and other projections retain serial execution. Arithmetic and the order of operations within each point are unchanged. Each row owns separate field values and bitmap words.
 
 The qualified configuration is GNU 13.3 on Linux, four MPI ranks and four OpenMP threads per rank, with the separately installed parallel-compression NetCDF owner and compatible zlib-ng. MPI startup requests and requires `MPI_THREAD_FUNNELED`. Domain selection, MPI, NetCDF and HDF5 stay on the initial thread, outside the OpenMP regions. The provider rejects worker entry before making any MPI call.
 
@@ -9,21 +9,22 @@ The qualified configuration is GNU 13.3 on Linux, four MPI ranks and four OpenMP
 Use a separate configured checkout:
 
 ```sh
-WPS_METGRID_OPENMP=1 WPS_BUILD_JOBS=8 \
-  tools/build-metgrid-precompressed /absolute/owner-install
+WPS_BUILD_JOBS=8 tools/build-metgrid-precompressed /absolute/owner-install
 
 # Load the qualified MPI/IB environment first.
 WPS_PRECOMPRESSED_NETCDF_PREFIX=/absolute/owner-install \
 WPS_ZLIB_NG_LIBRARY=/absolute/zlib-ng/lib/libz.so \
-  tools/metgrid-openmp -- mpirun -np 4 --rankfile rankfile \
+  tools/metgrid -- mpirun -np 4 --rankfile rankfile \
   --bind-to core ./metgrid.exe
 ```
 
 Allocate sixteen physical cores. Each rankfile entry must bind its rank to four distinct physical cores; on the qualified hosts, an example is `rank 0=hpc02 slot=0:32-35`, followed by ranges 36–39, 40–43 and 44–47 for the other ranks. Keep UCX shared memory/IB transport. Compression uses the existing MPI ranks and adds no compression thread team.
 
-The dedicated launcher defaults `WPS_METGRID_OPENMP_THREADS` to 4 and sets `OMP_NUM_THREADS` explicitly, overriding the MPI environment's one-thread default. Set `WPS_METGRID_OPENMP_THREADS=1` to run this optional build with one interpolation thread. It defaults to core placement, close binding and disabled dynamic team sizing. The ordinary `tools/metgrid` launcher is unchanged.
+`tools/metgrid` defaults to four interpolation threads per rank for the accelerated build, overriding an inherited MPI-environment `OMP_NUM_THREADS=1`. Set `WPS_METGRID_OPENMP_THREADS=1` to run it with one interpolation thread. Core placement, close binding and disabled dynamic team sizing are the defaults. `tools/metgrid-openmp` remains a compatibility alias that explicitly enables this mode.
 
-The build option adds `-fopenmp -frecursive` and rebuilds the complete concurrently reachable module closure when changing modes. It requires the provider-enabled build. Rebuild with `WPS_METGRID_OPENMP=0` or unset to restore the original flags and `MPI_Init`. Geogrid's shared source retains its original preprocessed implementation. Production `/pool/wrf/WPS` is a read-only reference.
+The build adds `-fopenmp -frecursive` and rebuilds the complete concurrently reachable module closure when changing modes. Provider-enabled MPI/NetCDF builds select it automatically. Set `WPS_METGRID_OPENMP=0` when building to restore original flags and `MPI_Init`; set it when launching to preserve the caller's OpenMP environment. An unset build option now enables threading when the provider is selected. Geogrid's shared source retains its original preprocessed implementation. Production `/pool/wrf/WPS` is a read-only reference.
+
+The launcher reads the build's `.metgrid_backend_mode` stamp to select its owner prefix and thread mode. For a separately selected executable, explicitly supply its matching `WPS_PRECOMPRESSED_NETCDF_PREFIX` and `WPS_METGRID_OPENMP` settings. To restore the ordinary executable, rebuild with `WPS_METGRID_PRECOMPRESSED=0 WPS_METGRID_OPENMP=0` and launch from a clean original library environment. Neither runtime switch removes code from an already accelerated executable.
 
 ## Evidence
 

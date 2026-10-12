@@ -2,9 +2,9 @@
 # Build in a separately configured WPS checkout; never replace a system library.
 set -euo pipefail
 repo_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
-prefix="${1:-${METGRID_PRECOMPRESSED_NETCDF_PREFIX:-}}"
+prefix="${1:-${METGRID_PRECOMPRESSED_NETCDF_PREFIX:-/pool/wrf-experiment/builds/backend-integration/netcdf-owner-package-r1/install}}"
 if [[ -z "$prefix" || "$prefix" != /* || $# -gt 1 ]]; then
-    echo "Usage: tools/build-metgrid-precompressed /absolute/patched-netcdf-prefix" >&2
+    echo "Usage: tools/build-metgrid-precompressed [/absolute/patched-netcdf-prefix]" >&2
     exit 2
 fi
 if [[ "$repo_dir" == /pool/wrf/WPS ]]; then
@@ -22,6 +22,10 @@ for symbol in nc_precompressed_provider_begin nc_precompressed_provider_end; do
 done
 jobs="${WPS_BUILD_JOBS:-4}"
 [[ "$jobs" =~ ^[1-9][0-9]*$ ]] || { echo "WPS_BUILD_JOBS must be positive." >&2; exit 2; }
+if [[ "${WPS_METGRID_PRECOMPRESSED:-1}" != 1 ]]; then
+    echo "This helper builds the compression backend; use ordinary compile with WPS_METGRID_PRECOMPRESSED=0 for rollback." >&2
+    exit 2
+fi
 export METGRID_PRECOMPRESSED_NETCDF_PREFIX="$prefix"
 # WPS's retained build ignores some compiler failures; require a fresh executable.
 rm -f -- "$repo_dir/metgrid/src/metgrid.exe"
@@ -49,4 +53,4 @@ if [[ "$closure" == *'not found'* ]]; then echo "$closure" >&2; exit 1; fi
 ln -sfn src/metgrid.exe "$repo_dir/metgrid/metgrid.exe"
 ln -sfn metgrid/metgrid.exe "$repo_dir/metgrid.exe"
 printf '%s\n' "$closure"
-echo "Built optional provider Metgrid. Run with WPS_PRECOMPRESSED_NETCDF_PREFIX=$prefix tools/metgrid -- <MPI command> $exe"
+echo "Built default accelerated Metgrid. Run with WPS_PRECOMPRESSED_NETCDF_PREFIX=$prefix tools/metgrid -- <MPI command> $exe"

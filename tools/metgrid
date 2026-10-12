@@ -5,19 +5,44 @@ repo_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
 if [[ "${1:-}" == -- ]]; then shift; fi
 if [[ $# == 0 ]]; then set -- "${WPS_METGRID_EXECUTABLE:-$repo_dir/metgrid.exe}"; fi
 
-# Select the separately installed provider library for an optional backend build.
-# Rollback uses the ordinary executable with this variable unset.
-if [[ -n "${WPS_PRECOMPRESSED_NETCDF_PREFIX:-}" ]]; then
-    if [[ "$WPS_PRECOMPRESSED_NETCDF_PREFIX" != /* ]]; then
+# Default to the qualified owner and four interpolation threads per rank.
+# A build's mode stamp supplies its selected prefix/mode, including rollback.
+provider_default=/pool/wrf-experiment/builds/backend-integration/netcdf-owner-package-r1/install
+openmp_default=1
+if [[ -f "$repo_dir/metgrid/src/.metgrid_backend_mode" ]]; then
+    mapfile -t build_mode < "$repo_dir/metgrid/src/.metgrid_backend_mode"
+    provider_default="${build_mode[0]:-}"
+    openmp_default="${build_mode[1]:-0}"
+fi
+backend="${WPS_METGRID_PRECOMPRESSED:-1}"
+[[ "$backend" == 0 || "$backend" == 1 ]] || { echo "WPS_METGRID_PRECOMPRESSED must be 0 or 1." >&2; exit 2; }
+if [[ "$backend" == 0 ]]; then
+    provider_default=""
+    openmp_default=0
+fi
+provider_prefix="${WPS_PRECOMPRESSED_NETCDF_PREFIX-$provider_default}"
+if [[ "$backend" == 0 ]]; then provider_prefix=""; fi
+if [[ -n "$provider_prefix" ]]; then
+    if [[ "$provider_prefix" != /* ]]; then
         echo "WPS_PRECOMPRESSED_NETCDF_PREFIX must be absolute." >&2
         exit 1
     fi
-    provider_dir="$WPS_PRECOMPRESSED_NETCDF_PREFIX/lib"
-    if [[ ! -f "$WPS_PRECOMPRESSED_NETCDF_PREFIX/include/netcdf_precompressed.h" || ! -f "$provider_dir/libnetcdf.so" ]]; then
-        echo "Patched NetCDF installation missing in WPS_PRECOMPRESSED_NETCDF_PREFIX." >&2
+    provider_dir="$provider_prefix/lib"
+    if [[ ! -f "$provider_prefix/include/netcdf_precompressed.h" || ! -f "$provider_dir/libnetcdf.so" ]]; then
+        echo "Patched NetCDF installation missing: $provider_prefix" >&2
         exit 1
     fi
     export LD_LIBRARY_PATH="$provider_dir${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+fi
+openmp="${WPS_METGRID_OPENMP:-$openmp_default}"
+[[ "$openmp" == 0 || "$openmp" == 1 ]] || { echo "WPS_METGRID_OPENMP must be 0 or 1." >&2; exit 2; }
+if [[ "$openmp" == 1 ]]; then
+    threads="${WPS_METGRID_OPENMP_THREADS:-4}"
+    [[ "$threads" =~ ^[1-9][0-9]*$ ]] || { echo "WPS_METGRID_OPENMP_THREADS must be positive." >&2; exit 2; }
+    export OMP_NUM_THREADS="$threads"
+    export OMP_DYNAMIC="${OMP_DYNAMIC:-FALSE}"
+    export OMP_PLACES="${OMP_PLACES:-cores}"
+    export OMP_PROC_BIND="${OMP_PROC_BIND:-close}"
 fi
 
 if [[ "${WPS_USE_STOCK_ZLIB:-0}" == 1 ]]; then

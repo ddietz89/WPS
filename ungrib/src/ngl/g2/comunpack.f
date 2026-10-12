@@ -43,6 +43,18 @@
 !
 !$$$
 
+      use iso_c_binding, only: c_char,c_int,c_int32_t,c_int64_t
+      interface
+        function gpa_unpack_group(p,plen,boff,width,count,out)
+     &      bind(C,name="gpa_unpack_group") result(ok)
+          import c_char,c_int,c_int32_t,c_int64_t
+          character(kind=c_char),intent(in) :: p(*)
+          integer(c_int64_t),value :: plen,boff
+          integer(c_int),value :: width,count
+          integer(c_int32_t),intent(inout) :: out(*)
+          integer(c_int) :: ok
+        end function
+      end interface
       character(len=1),intent(in) :: cpack(len)
       integer,intent(in) :: ndpts,len
       integer,intent(in) :: idrstmpl(*)
@@ -58,6 +70,8 @@
       integer,allocatable :: group_n(:),group_bit(:)
       integer(kind=8) :: points8,end8,limit8,length8,width8
       integer :: group_cursor,group_offset
+      integer(c_int) :: group_avx2_ok
+      integer(c_int64_t) :: group_payload_len
 
       ier=0
       !print *,'IDRSTMPL: ',(idrstmpl(j),j=1,16)
@@ -234,6 +248,8 @@
            if (points8.ne.int(ndpts,8)) group_fast=.false.
          endif
          if (group_fast) then
+           group_payload_len=min(int(len,c_int64_t),
+     &                           int(lensec,c_int64_t)-5_c_int64_t)
            allocate(group_n(ngroups),group_bit(ngroups))
            n=1
            group_offset=iofst
@@ -245,13 +261,19 @@
            enddo
 !$omp parallel do default(none) schedule(static)
 !$omp& shared(ngroups,cpack,ifld,gwidth,glen,gref,group_n,
-!$omp& group_bit) private(j,k,group_cursor,group_offset)
+!$omp& group_bit,group_payload_len)
+!$omp& private(j,k,group_cursor,group_offset,group_avx2_ok)
            do j=1,ngroups
              group_cursor=group_n(j)
              group_offset=group_bit(j)
              if (gwidth(j).ne.0) then
-               call gbytes(cpack,ifld(group_cursor),group_offset,
-     &                     gwidth(j),0,glen(j))
+               group_avx2_ok=gpa_unpack_group(cpack,
+     &           group_payload_len,int(group_offset,c_int64_t),
+     &           gwidth(j),glen(j),ifld(group_cursor))
+               if (group_avx2_ok.eq.0) then
+                 call gbytes(cpack,ifld(group_cursor),group_offset,
+     &                       gwidth(j),0,glen(j))
+               endif
                do k=1,glen(j)
                  ifld(group_cursor)=ifld(group_cursor)+gref(j)
                  group_cursor=group_cursor+1

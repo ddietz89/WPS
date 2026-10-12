@@ -53,6 +53,8 @@ OBJS	=	gridtemplates.o pdstemplates.o drstemplates.o gribmod.o realloc.o intmath
 		getidx.o getg2i.o getg2ir.o getgb2s.o getgb2r.o getgb2l.o getgb2.o getgb2p.o getgb2rp.o \
 		putgb2.o g2grids.o gdt2gds.o params.o params_ecmwf.o mova2i.o
 
+OBJS += groupavx2.o
+
 all:	$(LIB)
 
 $(LIB):	$(OBJS)

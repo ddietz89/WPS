@@ -74,6 +74,9 @@ module output_module
          import c_int,c_ptr
          type(c_ptr),value :: session
       end function
+      integer(c_int) function chunk_workspace_clear() bind(C,name="wps_chunk_workspace_clear")
+         import c_int
+      end function
       integer(c_int) function chunk_proof_write() bind(C,name="wps_chunk_proof_write")
          import c_int
       end function
@@ -1802,6 +1805,8 @@ module output_module
       end if
   
 #if defined(WPS_CHUNK_MPI) && defined(IO_NETCDF) && defined(_MPI) && !defined(_GEOGRID)
+      istatus=chunk_workspace_clear()
+      call mprintf((istatus/=0),ERROR,'Compressed output workspace clear failed')
       istatus=chunk_proof_write()
       call mprintf((istatus/=0),ERROR,'Compressed output proof receipt failed')
 #endif

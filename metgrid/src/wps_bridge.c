@@ -29,17 +29,30 @@ static int wps_omp_main_thread(void) {
 #define WORK 1
 #define DONE 2
 #define CHUNK_LIMIT (64u*1024u*1024u)
+#define WORKSPACE_CAP (256u*1024u*1024u)
 typedef struct wps_chunk_session {
  MPI_Comm comm; int rank,size,root,done,busy; unsigned magic; size_t work_batches;
 } wps_chunk_session;
 typedef struct {unsigned char *blob;} result_storage;
-/* Instrumentation only, main-thread SINGLE: no algorithm scratch in globals. */
+/* Process-local ROOT packed-input scratch. Main-thread-only, no locks. */
+static unsigned char *workspace_ptr;
+static size_t workspace_capacity;
+static int workspace_leased;
+/* Proof counters only; accessed by the serialized main thread. */
 static struct {int known,rank,size;uint64_t sessions,provider_calls,work_batches,chunks,raw_bytes,compressed_bytes,declines,provider_errors,done,done_errors,no_work,closes;} proof;
 
 static void mpi_check(wps_chunk_session *s,int e){if(e!=MPI_SUCCESS)MPI_Abort(s->comm,e);}
 static int agree(wps_chunk_session *s,int bad){int out;mpi_check(s,MPI_Allreduce(&bad,&out,1,MPI_INT,MPI_MAX,s->comm));return out;}
 static void release_result(void *p){result_storage *s=p;if(s){free(s->blob);free(s);}}
 static int multiply(size_t a,size_t b,size_t *out){if(b&&a>SIZE_MAX/b)return 0;*out=a*b;return 1;}
+int wps_chunk_workspace_clear(void){
+#ifdef WPS_OPENMP_FUNNELED
+ /* Reject worker entry before touching cache; FUNNELED main thread only. */
+ if(!wps_omp_main_thread())return NC_EINVAL;
+#endif
+ if(workspace_leased)return NC_EINVAL;
+ free(workspace_ptr);workspace_ptr=NULL;workspace_capacity=0;return NC_NOERR;
+}
 int wps_chunk_session_create(MPI_Fint fcomm,int root,const char *field,int eligible,wps_chunk_session **out){
 #ifdef WPS_OPENMP_FUNNELED
  /* Reject worker entry before any MPI call; FUNNELED allows only main thread. */
@@ -156,7 +169,14 @@ int wps_chunk_provider(const nc_precompressed_float_layout *layout,const void *r
  if(!s||s->magic!=MAGIC||s->rank!=s->root||s->done||s->busy||!result)return NC_EINVAL;
  memset(result,0,sizeof *result);proof.provider_calls++;
  if(!raw||!layout_valid(layout,bytes,&chunk_bytes)){proof.declines++;return 0;}
- size_t total=chunk_bytes*layout->batch_count;packed=malloc(total);if(!packed){proof.provider_errors++;return NC_ENOMEM;}
+ size_t total;if(!multiply(chunk_bytes,layout->batch_count,&total)||total>WORKSPACE_CAP){proof.provider_errors++;return NC_ENOMEM;}
+ if(workspace_leased)return NC_EINVAL;
+ if(workspace_capacity<total){
+  unsigned char *fresh=malloc(total);
+  if(!fresh){proof.provider_errors++;return NC_ENOMEM;}
+  free(workspace_ptr);workspace_ptr=fresh;workspace_capacity=total;
+ }
+ packed=workspace_ptr;workspace_leased=1;
  int ranks[4]={0},base[4]={0};for(size_t c=0;c<layout->batch_count;c++)ranks[(layout->batch_first+c)%(size_t)s->size]++;
  for(int r=1;r<s->size;r++)base[r]=base[r-1]+ranks[r-1];int filled[4]={0};
  for(size_t c=0;c<layout->batch_count;c++){int r=(int)((layout->batch_first+c)%(size_t)s->size);pack_chunk(layout,c,raw,packed+(size_t)(base[r]+filled[r]++)*chunk_bytes,chunk_bytes);}
@@ -165,7 +185,7 @@ int wps_chunk_provider(const nc_precompressed_float_layout *layout,const void *r
  mpi_check(s,MPI_Bcast(&copy,(int)sizeof copy,MPI_BYTE,s->root,s->comm));
  unsigned long long n=chunk_bytes;mpi_check(s,MPI_Bcast(&n,1,MPI_UNSIGNED_LONG_LONG,s->root,s->comm));
  if(agree(s,0))MPI_Abort(s->comm,NC_EINVAL);
- int rc=batch_work(s,&copy,packed,chunk_bytes,result);free(packed);s->busy=0;if(rc!=NC_NOERR)proof.provider_errors++;else for(size_t i=0;i<result->count;i++)proof.compressed_bytes+=result->nbytes[i];return rc==NC_NOERR?1:rc;
+ int rc=batch_work(s,&copy,packed,chunk_bytes,result);workspace_leased=0;s->busy=0;if(rc!=NC_NOERR)proof.provider_errors++;else for(size_t i=0;i<result->count;i++)proof.compressed_bytes+=result->nbytes[i];return rc==NC_NOERR?1:rc;
 }
 int wps_chunk_workers(wps_chunk_session *s){
  if(!s||s->magic!=MAGIC||s->rank==s->root||s->done||s->busy)return NC_EINVAL;

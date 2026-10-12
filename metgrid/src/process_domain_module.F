@@ -2271,6 +2271,7 @@ integer, parameter :: BDR_WIDTH = 3
 #ifdef WPS_OPENMP_FUNNELED
       logical :: thread_rows
 #endif
+      logical :: point_was_set
       real :: rx, ry, temp
       real, pointer, dimension(:,:) :: data_count
       type (fg_input) :: mask_field, mask_water_field, mask_land_field
@@ -2460,7 +2461,7 @@ integer, parameter :: BDR_WIDTH = 3
                      field%r_arr(i,j) = fill_missing(idx)
 
                      ! Assume that if missing fill value is other than default, then user has asked
-                     !    to fill in any missing values, and we can consider this point to have 
+                     !    to fill in any missing values, and we can consider this point to have
                      !    received a valid value
                      if (fill_missing(idx) /= NAN) call bitarray_set(new_pts, i-sm1+1, j-sm2+1)
                   end if
@@ -2500,7 +2501,7 @@ integer, parameter :: BDR_WIDTH = 3
                      field%r_arr(i,j) = fill_missing(idx)
 
                      ! Assume that if missing fill value is other than default, then user has asked
-                     !    to fill in any missing values, and we can consider this point to have 
+                     !    to fill in any missing values, and we can consider this point to have
                      !    received a valid value
                      if (fill_missing(idx) /= NAN) call bitarray_set(new_pts, i-sm1+1, j-sm2+1)
                   end if
@@ -2527,10 +2528,11 @@ integer, parameter :: BDR_WIDTH = 3
                            istagger == V .or. istagger == CORNER) .and. &
                           masked(idx) /= MASKED_BOTH
          end if
-         !$omp parallel do schedule(static) default(shared) private(i,temp) if(thread_rows)
+         !$omp parallel do schedule(static) default(shared) private(i,temp,point_was_set) if(thread_rows)
 #endif
          do j=sm2,em2
             do i=sm1,em1
+               point_was_set = .false.
 
                if (abs(i - sd1) >= process_width .and. (abs(i - ed1) >= process_width) .and. &
                    abs(j - sd2) >= process_width .and. (abs(j - ed2) >= process_width)) then
@@ -2603,21 +2605,25 @@ integer, parameter :: BDR_WIDTH = 3
                if (temp /= missing_value(idx)) then
                   field%r_arr(i,j) = temp
                   call bitarray_set(new_pts, i-sm1+1, j-sm2+1)
+                  point_was_set = .true.
                else if (present(landmask)) then
                   if (landmask(i,j) == masked(idx)) then
                      field%r_arr(i,j) = fill_missing(idx)
                      call bitarray_set(new_pts, i-sm1+1, j-sm2+1)
+                     point_was_set = .true.
                   end if
                end if
 
-               if (.not. bitarray_test(new_pts, i-sm1+1, j-sm2+1) .and. &
-                   .not. bitarray_test(field%valid_mask, i-sm1+1, j-sm2+1)) then
-                  field%r_arr(i,j) = fill_missing(idx)
+               if (.not. point_was_set) then
+                  if (.not. bitarray_test(new_pts, i-sm1+1, j-sm2+1) .and. &
+                      .not. bitarray_test(field%valid_mask, i-sm1+1, j-sm2+1)) then
+                     field%r_arr(i,j) = fill_missing(idx)
 
-                  ! Assume that if missing fill value is other than default, then user has asked
-                  !    to fill in any missing values, and we can consider this point to have 
-                  !    received a valid value
-                  if (fill_missing(idx) /= NAN) call bitarray_set(new_pts, i-sm1+1, j-sm2+1)
+                     ! Assume that if missing fill value is other than default, then user has asked
+                     !    to fill in any missing values, and we can consider this point to have
+                     !    received a valid value
+                     if (fill_missing(idx) /= NAN) call bitarray_set(new_pts, i-sm1+1, j-sm2+1)
+                  end if
                end if
 
             end do

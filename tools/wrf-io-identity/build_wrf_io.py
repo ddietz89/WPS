@@ -3,8 +3,8 @@ import argparse,hashlib,json,os,re,shutil,subprocess,sys
 from pathlib import Path
 
 SRC_SHA='c3cb2d549f5547cf9bb86c080e5b5a332c2280da408a9b0be1988e9b6ca8c4ef'
-PATCH_SHA='a052379c6bd8c7a94e3f874db4af762e246a5a2cc0f162272365ca594533cfe1'
-PATCHED_SHA='87f1c7bf2f0dabe271dde80f976e9cf06902b1fa0b622876e680e54f12264f3a'
+PATCH_SHA='b8a624970560a345e528b1b96c114aa00735642b853563207d9389dbcf652e70'
+PATCHED_SHA='494ca8c7eab58d00c4899f6d7b535731de41327bcc8305dd166d03b4a01edc31'
 ARCHIVE_SHA='00121efbb91287bdc72e20651cd9dae77bbd01930006615f66fe56fbda61053f'
 FLAGS=['-O2','-fno-fast-math','-ffp-contract=off','-ffree-form','-ffree-line-length-none','-fconvert=big-endian','-frecord-marker=4','-fallow-argument-mismatch','-fallow-invalid-boz']
 FORBIDDEN={'/pool/wrf/WPS'}

@@ -115,3 +115,79 @@
      endif
    else
      Status = WRF_ERR_FATAL_BAD_FILE_STATUS
+@@ -2832,6 +2877,10 @@
+   integer                                      :: Len
+   integer                                      :: stat
+   integer                                      :: di
++  integer, parameter :: copy_kind = selected_int_kind(18)
++  logical :: copyOK, copyCandidate
++  integer :: copyDim
++  integer(kind=copy_kind) :: copyWidth, copyWords, copyLimit
+   integer                                      :: FType
+ 
+   MemoryOrder = trim(adjustl(MemoryOrdIn))
+@@ -3017,9 +3066,50 @@
+       call wrf_debug ( WARN , TRIM(msg))
+       return
+     endif
++    ! Codex: complete identity copy after successful FieldIO only.
++    ! Keep XField so failed reads preserve the original caller destination.
++    copyOK = .false.
++    copyCandidate = .false.
++    copyWords = 1_copy_kind
++    copyLimit = int(huge(0),copy_kind)
++    if(FieldType == WRF_REAL .and. di == 1 .and. bit_size(0) == 32 .and. storage_size(0.0) == 32) then
++      if(MemoryOrder == 'XY ' .and. NDim == 2) copyCandidate = .true.
++      if(MemoryOrder == 'XYZ' .and. NDim == 3) copyCandidate = .true.
++    endif
++    if(copyCandidate) then
++      if(l1 /= i1 .or. l2 /= i2 .or. m1 /= j1 .or. m2 /= j2 .or. n1 /= k1 .or. n2 /= k2) copyCandidate = .false.
++      if(l1 <= 0 .or. m1 <= 0 .or. n1 <= 0) copyCandidate = .false.
++      if(l2 < l1 .or. m2 < m1 .or. n2 < n1) copyCandidate = .false.
++      if(NDim == 2) then
++        if(n1 /= 1 .or. n2 /= 1 .or. k1 /= 1 .or. k2 /= 1) copyCandidate = .false.
++      endif
++      do copyDim = 1,NDim
++        if(MemoryStart(copyDim) /= PatchStart(copyDim)) copyCandidate = .false.
++        if(MemoryEnd(copyDim) /= PatchEnd(copyDim)) copyCandidate = .false.
++        if(DomainStart(copyDim) /= PatchStart(copyDim)) copyCandidate = .false.
++        if(DomainEnd(copyDim) /= PatchEnd(copyDim)) copyCandidate = .false.
++        copyWidth = int(MemoryEnd(copyDim),copy_kind)-int(MemoryStart(copyDim),copy_kind)+1_copy_kind
++        if(copyWidth <= 0_copy_kind) then
++          copyCandidate = .false.
++        else
++          if(copyWidth /= int(Length(copyDim),copy_kind)) copyCandidate = .false.
++          if(copyWidth /= int(StoredLen(copyDim),copy_kind)) copyCandidate = .false.
++          if(copyWidth > copyLimit/copyWords) then
++            copyCandidate = .false.
++          else
++            copyWords = copyWords*copyWidth
++          endif
++        endif
++      enddo
++    endif
++    copyOK = copyCandidate
++    if(copyOK) then
++      call wps_copy_identity_words(int(copyWords),XField,Field)
++    else
+     call Transpose('read',MemoryOrder,di, Field,l1,l2,m1,m2,n1,n2 &
+                                         ,XField,x1,x2,y1,y2,z1,z2 &
+                                                ,i1,i2,j1,j2,k1,k2 )
++    endif
+     deallocate(XField, STAT=stat)
+     if(stat/= 0) then
+       Status = WRF_ERR_FATAL_DEALLOCATION_ERR
+@@ -3682,3 +3772,13 @@
+ 
+   return
+ end subroutine ext_ncd_error_str
++
++subroutine wps_copy_identity_words(nwords, source, dest)
++  implicit none
++  integer, intent(in) :: nwords
++  integer, intent(in) :: source(nwords)
++  integer, intent(out) :: dest(nwords)
++  dest(1:nwords) = source(1:nwords)
++  return
++end subroutine wps_copy_identity_words
++

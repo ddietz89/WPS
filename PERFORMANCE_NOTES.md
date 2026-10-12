@@ -39,7 +39,7 @@ These additions were initially promoted without new runs at the user's request. 
 
 ## Ungrib OpenMP build and runtime
 
-GNU and AOCC/flang builds select `-fopenmp`; Intel ifort/ifx builds select `-qopenmp`. The flags apply to ungrib's GRIB2 library, main program and executable links. Other WPS stages keep their existing build settings. Set `UNGRIB_OPENMP_FLAGS=` when invoking make for a serial build; other compilers can supply their own OpenMP flag through that variable.
+GNU and AOCC/flang builds select `-fopenmp`; Intel ifort/ifx builds select `-qopenmp`. The flags apply to ungrib's GRIB2 library, main program, RRPR RH adjustment and executable links. Other WPS stages keep their existing build settings. Set `UNGRIB_OPENMP_FLAGS=` when invoking make for a serial build; other compilers can supply their own OpenMP flag through that variable.
 
 Use `OMP_NUM_THREADS=1` for serial decoding or another explicit value to override the four-thread default. Launchers that already export OMP_NUM_THREADS retain that choice. Allocate four physical cores per default ungrib process: three valid-time workers plus four-rank geogrid fit within sixteen cores using disjoint core sets.
 
@@ -70,3 +70,7 @@ Metgrid MPI/NetCDF builds now default to the qualified parallel-compression owne
 ## Ungrib RRPR bulk reads
 
 RRPR now reads its freshly allocated contiguous two-dimensional pointer through a full array section, avoiding per-element Fortran runtime transfers. Record framing, endian conversion and storage ownership remain unchanged. Two reversed GNU three-time stage pairs reduced wall by 23.97–40.42%, median32.19%, with all12 intermediate products byte-exact; median CPU fell26.97%. Actual-source bit/ownership kernels pass in GNU/AOCC/Intel stacks, and original malformed-record behavior is preserved. See OPTIMIZATION_FINDINGS.md for scope/evidence. Rollback selects the retained prior executable or restores the previous RRPR source and rebuilds.
+
+## Ungrib RH row threads
+
+RH adjustment partitions independent rows using the existing Ungrib OpenMP runtime and four-thread default. Scalar formulas, threshold branches and serial storage ownership remain unchanged. Two reversed GNU three-time stage pairs improved wall5.79% median for0.86% moreCPU; all12 intermediate files were byte-exact. The actual-source storage oracle passed25,065,936 checks at1/2/4threads. Scope is GNU scientific values under configured nontrapping fixed rounding, not master-thread IEEE status/trap ordering; AOCC/Intel qualification for this new threaded path is pending. These gains are separate from prior RRPR and pipeline percentages. Use OMP_NUM_THREADS=1 for one-thread execution, or restore the previous RRPR source/build rule and rebuild; the retained bulk-read executable is a qualified rollback. See OPTIMIZATION_FINDINGS.md for hashes and evidence.

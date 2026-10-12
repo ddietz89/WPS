@@ -1335,28 +1335,55 @@ subroutine fix_gfs_rh (ix, jx, plvl)
   allocate(tt(ix,jx))
   call get_storage(nint(plvl), 'RH', rh, ix, jx)
   call get_storage(nint(plvl), 'TT', tt, ix, jx)
-  do j = 1, jx
-  do i = 1, ix
-    if ( tt(i,j) .le. 273.15 ) then
-      ! Murphy and Koop 2005 ice saturation vapor pressure.
-      ! eis and ews in hPA, tt is in K
-      eis = .01 * exp (9.550426 - (5723.265 / tt(i,j)) + (3.53068 * alog(tt(i,j))) &
-         - (0.00728332 * tt(i,j)))
-      ! Bolton 1980 liquid saturation vapor pressure. For water saturation, most 
-      ! formulae are very similar from 0 to -20, so we don't need a more exact formula.
+  if ( jx .gt. 1 ) then
+!$omp parallel do default(none) schedule(static) shared(ix,jx,rh,tt) private(i,eis,ews,r)
+    do j = 1, jx
+      do i = 1, ix
+        if ( tt(i,j) .le. 273.15 ) then
+          ! Murphy and Koop 2005 ice saturation vapor pressure.
+          ! eis and ews in hPA, tt is in K
+          eis = .01 * exp (9.550426 - (5723.265 / tt(i,j)) + (3.53068 * alog(tt(i,j))) &
+             - (0.00728332 * tt(i,j)))
+          ! Bolton 1980 liquid saturation vapor pressure. For water saturation, most 
+          ! formulae are very similar from 0 to -20, so we don't need a more exact formula.
 
-      ews = 6.112 * exp(17.67 * (tt(i,j)-273.15) / ((tt(i,j)-273.15)+243.5))
-      if ( tt(i,j) .gt. 253.15 ) then
-        ! A linear approximation to the GFS blending region ( -20 > T < 0 )
-        r = ((273.15 - tt(i,j)) / 20.)
-        r = (r * eis) + ((1-r)*ews)
-      else
-        r = eis
-      endif
-      rh(i,j) = rh(i,j) * (r / ews)
-    endif
-  enddo
-  enddo
+          ews = 6.112 * exp(17.67 * (tt(i,j)-273.15) / ((tt(i,j)-273.15)+243.5))
+          if ( tt(i,j) .gt. 253.15 ) then
+            ! A linear approximation to the GFS blending region ( -20 > T < 0 )
+            r = ((273.15 - tt(i,j)) / 20.)
+            r = (r * eis) + ((1-r)*ews)
+          else
+            r = eis
+          endif
+          rh(i,j) = rh(i,j) * (r / ews)
+        endif
+      enddo
+    enddo
+!$omp end parallel do
+  else
+    do j = 1, jx
+      do i = 1, ix
+        if ( tt(i,j) .le. 273.15 ) then
+          ! Murphy and Koop 2005 ice saturation vapor pressure.
+          ! eis and ews in hPA, tt is in K
+          eis = .01 * exp (9.550426 - (5723.265 / tt(i,j)) + (3.53068 * alog(tt(i,j))) &
+             - (0.00728332 * tt(i,j)))
+          ! Bolton 1980 liquid saturation vapor pressure. For water saturation, most 
+          ! formulae are very similar from 0 to -20, so we don't need a more exact formula.
+
+          ews = 6.112 * exp(17.67 * (tt(i,j)-273.15) / ((tt(i,j)-273.15)+243.5))
+          if ( tt(i,j) .gt. 253.15 ) then
+            ! A linear approximation to the GFS blending region ( -20 > T < 0 )
+            r = ((273.15 - tt(i,j)) / 20.)
+            r = (r * eis) + ((1-r)*ews)
+          else
+            r = eis
+          endif
+          rh(i,j) = rh(i,j) * (r / ews)
+        endif
+      enddo
+    enddo
+  endif
   call put_storage(nint(plvl), 'RH', rh, ix, jx)
   deallocate (rh)
   deallocate (tt)

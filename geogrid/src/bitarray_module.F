@@ -196,4 +196,90 @@ module bitarray_module
  
    end subroutine bitarray_destroy
  
+#ifdef _METGRID
+   logical function bitarray_all_valid_rect(b, nx, ny)
+
+      implicit none
+
+      ! Arguments
+      type (bitarray), intent(in) :: b
+      integer, intent(in) :: nx, ny   ! Requested logical rectangle dims (bits)
+
+      ! Locals
+      integer :: ii, jj      ! Loop counters over integers (words)
+      integer :: full, tail  ! Full words and tail bits in x
+      integer :: needed      ! Integer words needed per row in x
+      integer :: words       ! Integer words to scan in x this row
+      integer :: w           ! Scratch word
+      integer :: allbits     ! All-ones mask
+      logical :: row_ok      ! This row status
+
+      ! Conservative default: report FALSE for any unsupported/uncertain case so
+      ! that callers fall back to the unchanged original loops.
+      bitarray_all_valid_rect = .false.
+
+      ! Configured default: INTEGER32. Require 32-bit integers both in the
+      ! compiled default kind of this module and in this descriptor.
+      if (bit_size(0) /= 32) return
+      if (b%integer_size /= 32) return
+
+      ! Descriptor association MUST be checked before any bounds query.
+      if (.not. associated(b%iarray)) return
+
+      ! Require positive header dimensions.
+      if (b%nx <= 0) return
+      if (b%ny <= 0) return
+
+      ! Require positive request, within header bounds.
+      if (nx <= 0) return
+      if (nx >= huge(0)) return
+      if (ny <= 0) return
+      if (ny >= huge(0)) return
+      if (nx > b%nx) return
+      if (ny > b%ny) return
+
+      ! Require unit lower bounds on the actual storage array.
+      if (lbound(b%iarray, 1) /= 1) return
+      if (lbound(b%iarray, 2) /= 1) return
+
+      ! Compute complete words plus possible tail without nx+31 overflow.
+      full = nx / 32
+      tail = mod(nx, 32)
+      needed = full
+      if (tail > 0) needed = full + 1
+      if (needed <= 0) return
+
+      ! The actual storage integer dimensions must suffice for the requested
+      ! complete words plus tail, conservatively, per the actual allocation
+      ! convention (CEILING(real(nx)/real(integer_size))).
+      if (b%x_int_dim < needed) return
+      if (b%y_int_dim < ny) return
+      if (size(b%iarray, 1) < needed) return
+      if (size(b%iarray, 2) < ny) return
+
+      allbits = not(0)
+
+      do jj = 1, ny
+         row_ok = .true.
+         do ii = 1, full
+            w = b%iarray(ii, jj)
+            if (w /= allbits) then
+               row_ok = .false.
+               exit
+            end if
+         end do
+         if (row_ok .and. tail > 0) then
+            w = b%iarray(full + 1, jj)
+            if (ibits(w, 0, tail) /= ibits(allbits, 0, tail)) then
+               row_ok = .false.
+            end if
+         end if
+         if (.not. row_ok) return
+      end do
+
+      bitarray_all_valid_rect = .true.
+
+   end function bitarray_all_valid_rect
+#endif
+
 end module bitarray_module

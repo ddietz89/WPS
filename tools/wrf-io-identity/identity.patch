@@ -1,0 +1,117 @@
+--- a/external/io_netcdf/wrf_io.F90
++++ b/external/io_netcdf/wrf_io.F90
+@@ -2463,6 +2463,10 @@
+   integer                                      :: l1,l2,m1,m2,n1,n2
+   integer                                      :: XType
+   integer                                      :: di
++  integer, parameter :: borrow_kind = selected_int_kind(18)
++  integer :: borrowDim
++  integer(borrow_kind) :: borrowWidth, borrowWords, borrowLimit
++  logical :: borrowOK
+   character (80)                               :: NullName
+   logical                                      :: NotFound
+ 
+@@ -2742,35 +2746,76 @@
+     call GetIndices(NDim,PatchStart, PatchEnd ,i1,i2,j1,j2,k1,k2)
+     di=1
+     if(FieldType == WRF_DOUBLE) di=2
+-    allocate(XField(di,x1:x2,y1:y2,z1:z2), STAT=stat)
+-    if(stat/= 0) then
+-      Status = WRF_ERR_FATAL_ALLOCATION_ERROR
+-      write(msg,*) 'Fatal ALLOCATION ERROR in ',__FILE__,', line', __LINE__
+-      call wrf_debug ( FATAL , TRIM(msg))
+-      return
++    ! Borrow only the exact contiguous real32 identity layout. Other writes
++    ! retain the original allocation/transpose path and error behavior.
++    borrowOK = .false.
++    if(FieldType == WRF_REAL .and. FieldTypeIn == WRF_REAL .and. di == 1 .and. bit_size(0) == 32 .and. storage_size(0.0) == 32) then
++      if(MemoryOrder == 'XY ' .and. NDim == 2) borrowOK = .true.
++      if(MemoryOrder == 'XYZ' .and. NDim == 3) borrowOK = .true.
+     endif
+-    if (DH%R4OnOutput .and. FieldTypeIn == WRF_DOUBLE) then
+-       call TransposeToR4('write',MemoryOrder,di, Field,l1,l2,m1,m2,n1,n2 &
+-                                                ,XField,x1,x2,y1,y2,z1,z2 &
+-                                                   ,i1,i2,j1,j2,k1,k2 )
++    if(borrowOK) then
++      if(l1 /= i1 .or. l2 /= i2 .or. m1 /= j1 .or. m2 /= j2 .or. n1 /= k1 .or. n2 /= k2) borrowOK = .false.
++      if(l1 <= 0 .or. m1 <= 0 .or. n1 <= 0) borrowOK = .false.
++      if(l2 < l1 .or. m2 < m1 .or. n2 < n1) borrowOK = .false.
++      borrowWords = 1_borrow_kind
++      borrowLimit = int(huge(0),borrow_kind)
++      do borrowDim = 1,NDim
++        if(MemoryStart(borrowDim) /= PatchStart(borrowDim)) borrowOK = .false.
++        if(MemoryEnd(borrowDim) /= PatchEnd(borrowDim)) borrowOK = .false.
++        if(DomainStart(borrowDim) /= PatchStart(borrowDim)) borrowOK = .false.
++        if(DomainEnd(borrowDim) /= PatchEnd(borrowDim)) borrowOK = .false.
++        borrowWidth = int(MemoryEnd(borrowDim),borrow_kind)-int(MemoryStart(borrowDim),borrow_kind)+1_borrow_kind
++        if(borrowWidth <= 0_borrow_kind) then
++          borrowOK = .false.
++        else
++          if(borrowWidth /= int(Length(borrowDim),borrow_kind)) borrowOK = .false.
++          if(borrowWidth > borrowLimit/borrowWords) then
++            borrowOK = .false.
++          else
++            borrowWords = borrowWords*borrowWidth
++          endif
++        endif
++      enddo
++    endif
++    if(borrowOK) then
++      call FieldIO('write',DataHandle,DateStr,Length,MemoryOrder, &
++                    FieldType,NCID,VarID,Field,Status)
++      if(Status /= WRF_NO_ERR) then
++        write(msg,*) 'Warning Status = ',Status,' in ',__FILE__,', line', __LINE__
++        call wrf_debug ( WARN , TRIM(msg))
++        return
++      endif
+     else
+-       call Transpose('write',MemoryOrder,di, Field,l1,l2,m1,m2,n1,n2 &
+-                                            ,XField,x1,x2,y1,y2,z1,z2 &
+-                                                   ,i1,i2,j1,j2,k1,k2 )
+-    end if
+-    call FieldIO('write',DataHandle,DateStr,Length,MemoryOrder, &
+-                  FieldType,NCID,VarID,XField,Status)
+-    if(Status /= WRF_NO_ERR) then
+-      write(msg,*) 'Warning Status = ',Status,' in ',__FILE__,', line', __LINE__ 
+-      call wrf_debug ( WARN , TRIM(msg))
+-      return
+-    endif
+-    deallocate(XField, STAT=stat)
+-    if(stat/= 0) then
+-      Status = WRF_ERR_FATAL_DEALLOCATION_ERR
+-      write(msg,*) 'Fatal DEALLOCATION ERROR in ',__FILE__,', line', __LINE__
+-      call wrf_debug ( FATAL , TRIM(msg))
+-      return
++      allocate(XField(di,x1:x2,y1:y2,z1:z2), STAT=stat)
++      if(stat/= 0) then
++        Status = WRF_ERR_FATAL_ALLOCATION_ERROR
++        write(msg,*) 'Fatal ALLOCATION ERROR in ',__FILE__,', line', __LINE__
++        call wrf_debug ( FATAL , TRIM(msg))
++        return
++      endif
++      if (DH%R4OnOutput .and. FieldTypeIn == WRF_DOUBLE) then
++         call TransposeToR4('write',MemoryOrder,di, Field,l1,l2,m1,m2,n1,n2 &
++                                                  ,XField,x1,x2,y1,y2,z1,z2 &
++                                                     ,i1,i2,j1,j2,k1,k2 )
++      else
++         call Transpose('write',MemoryOrder,di, Field,l1,l2,m1,m2,n1,n2 &
++                                              ,XField,x1,x2,y1,y2,z1,z2 &
++                                                     ,i1,i2,j1,j2,k1,k2 )
++      end if
++      call FieldIO('write',DataHandle,DateStr,Length,MemoryOrder, &
++                    FieldType,NCID,VarID,XField,Status)
++      if(Status /= WRF_NO_ERR) then
++        write(msg,*) 'Warning Status = ',Status,' in ',__FILE__,', line', __LINE__ 
++        call wrf_debug ( WARN , TRIM(msg))
++        return
++      endif
++      deallocate(XField, STAT=stat)
++      if(stat/= 0) then
++        Status = WRF_ERR_FATAL_DEALLOCATION_ERR
++        write(msg,*) 'Fatal DEALLOCATION ERROR in ',__FILE__,', line', __LINE__
++        call wrf_debug ( FATAL , TRIM(msg))
++        return
++      endif
+     endif
+   else
+     Status = WRF_ERR_FATAL_BAD_FILE_STATUS

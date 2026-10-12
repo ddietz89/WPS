@@ -60,7 +60,7 @@ subroutine rrpr(hstart, ntimes, interval, nlvl, maxlvl, plvl, &
   character (LEN=25) :: units
   character (LEN=46) :: Desc
   real, allocatable, dimension(:,:) :: scr2d, tmp2d
-  real, pointer, dimension(:,:) :: ptr2d
+  real, pointer, contiguous, dimension(:,:) :: ptr2d
 
   integer :: k, kk, mm, n, ierr, ifv
   integer :: itest, nn, nl, lvls, tvls
@@ -208,7 +208,7 @@ subroutine rrpr(hstart, ntimes, interval, nlvl, maxlvl, plvl, &
         endif
 
         allocate(ptr2d(map%nx,map%ny))
-        read (iunit) ptr2d
+        read (iunit) ptr2d(:,:)
         call refw_storage(nint(level), field, ptr2d, map%nx, map%ny)
         nullify (ptr2d)
      enddo rdloop

@@ -14,6 +14,20 @@ The preceding rank-scratch plus read-identity configuration passed **all14 produ
 
 The preceding root-domain plus reader pipeline passed **14 exact products and six provider sets**, measuring **17.55% less wall and 18.29% less CPU** in one indicative pair against the preceding read/rank-cache package. Unchanged prerequisite timing also improved, so the full wall difference cannot be attributed solely to the code. Earlier comparisons below retain their independent scope.
 
+### Original versus current stage elapsed times
+
+For the retained1500×1140 WPS4.7 case with native00/06/12 times, original GNU baseline5/6 runs averaged19.375seconds Geogrid,71.132seconds Ungrib and190.986seconds Metgrid. Original stage elapsed values were19.276/19.474,71.721/70.543 and192.323/189.650seconds, respectively. These were scientific baseline runs, not a new matched performance pair.
+
+| Complete three-time work | Original baseline average | Latest measured pipeline candidate |
+|---|---:|---:|
+| Geogrid (one geography file) |19.4s|19.1s|
+| Ungrib (three valid times) |71.1s|7.2s|
+| Metgrid (three valid times) |191.0s|27.3s|
+
+The original executed sequential stages on hpc01, with16MPI ranks for Geogrid/Metgrid, single-thread Ungrib and historical OB1/TCP transport. The latest pipeline used hpc02, qualified UCX shared-memory/IB,16Geogrid ranks, three simultaneous four-thread Ungrib jobs and three simultaneous Metgrid jobs of four ranks/four threads. Current Ungrib individual clocks were6.090/6.534/7.235seconds; Metgrid27.298/27.296/26.583seconds. Table current values take the slowest simultaneous time worker rather than sum clocks. The64-core current allocation exceeds the16-core original budget; dependencies, code, concurrency, transport and load/cache all differ. These elapsed comparisons do not establish code-only or resource-matched cumulative speedup. Geogrid shows no established material gain.
+
+The current complete pipeline clock was48.170seconds, including overlap, setup and readiness work. Original stage sums are not the same clock definition. This pipeline predates the two latest bitmap source promotions; their compound functional check is separate. Sources: `/pool/wrf-experiment/runs/m3/gfs2026031500-short-lambert1500x1140-gnu-baseline{5,6}/{geogrid,ungrib,metgrid}/execution.json`, baseline run manifests and `combined-group-pipeline-r1.json`. Local extracted history: `original-versus-current/original-stage-history.json`.
+
 ### Latest scaling/AVX2 combined pipeline
 
 One representative ordered comparison of current Metgrid2b978/Geo2e with Ungrib b895 versus c9ff passed **all 14 products and six provider sets** under unchanged exact science, metadata and output-layout acceptance. Pipeline wall was **50.849→48.170 seconds (5.27% lower)** and CPU **836.378→814.018 seconds (2.67% less)**. Both arms used the same owner/WRF/zlib-ng, native 00/06/12 inputs, CPU64/96GiB/no-swap allocation on hpc02 physical0–63, explicit rank/thread placement and qualified shared-memory/InfiniBand transport. Reference-add SIMD and SSE2 codec candidates were excluded.

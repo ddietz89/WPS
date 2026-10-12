@@ -10,7 +10,7 @@ The earlier combined configuration passed fresh short integration, including bot
 
 Production `/pool/wrf/WPS` remains a read-only reference. No production source or original scientific checker has been changed.
 
-The latest combined working package passed all 28 products in two reversed representative pipeline pairs, with median **7.93% less wall time and 7.16% less CPU** against the previous working defaults. This includes the new Ungrib scaling, WRF identity writes and root packing scratch cache; later experimental header/MPI in-place paths are excluded. Earlier 25/49-time pipeline and downstream results retain their original build scope. This incremental result is separate from the earlier 23.95% comparison and must not be added to it.
+The latest fully compared pipeline package at `f36dd67` passed all 28 products in two reversed representative pipeline pairs, with median **7.93% less wall time and 7.16% less CPU** against the previous working defaults. This includes Ungrib scaling, WRF identity writes and root packing scratch cache; the subsequently promoted rank scratch and experimental header/MPI in-place paths are excluded. Earlier 25/49-time pipeline and downstream results retain their original build scope. This incremental result is separate from the earlier 23.95% comparison and must not be added to it.
 
 ### Latest combined pipeline
 

@@ -11,6 +11,7 @@ module read_met_module
  
    logical :: file_payload_sizes_checked = .false.
    logical :: file_payload_sizes_validated = .false.
+   logical, private :: file_bulk_read_validated = .false.
 
    contains
  
@@ -36,6 +37,7 @@ module read_met_module
       istatus = 0
       file_payload_sizes_checked = .false.
       file_payload_sizes_validated = .false.
+      file_bulk_read_validated = .false.
     
       !  1) BUILD FILENAME BASED ON TIME 
       filename = ' '
@@ -52,6 +54,14 @@ module read_met_module
             file_payload_sizes_validated = audit_intermediate_payload_sizes(filename)
             file_payload_sizes_checked = .true.
          end if
+      end if
+
+      ! Envelope-verified eligibility for the positive-dimension bulk READ.
+      ! This path must not alter the original selection checked/validated flags.
+      if (file_payload_sizes_checked) then
+         file_bulk_read_validated = file_payload_sizes_validated
+      else
+         file_bulk_read_validated = audit_intermediate_payload_sizes(filename)
       end if
 
       !  2) OPEN FILE
@@ -86,6 +96,7 @@ module read_met_module
   
       ! Local variables
       character (len=8) :: startloc
+      real, pointer, contiguous :: read_slab(:,:)
   
       istatus = 1
   
@@ -190,8 +201,15 @@ module read_met_module
             allocate(fg_data % slab(0, 0))
             read(unit=input_unit,err=1001,end=1001)
          else
-            allocate(fg_data % slab(fg_data % nx, fg_data % ny))
-            read(unit=input_unit,err=1001,end=1001) fg_data % slab
+            if (file_bulk_read_validated .and. fg_data % nx > 0 .and. fg_data % ny > 0) then
+                nullify(read_slab)
+                allocate(read_slab(fg_data % nx, fg_data % ny))
+                fg_data % slab => read_slab
+                read(unit=input_unit,err=1001,end=1001) read_slab(:,:)
+            else
+                allocate(fg_data % slab(fg_data % nx, fg_data % ny))
+                read(unit=input_unit,err=1001,end=1001) fg_data % slab
+            end if
          end if
      
          istatus = 0 
@@ -295,8 +313,15 @@ module read_met_module
             allocate(fg_data % slab(0, 0))
             read(unit=input_unit,err=1001,end=1001)
          else
-            allocate(fg_data % slab(fg_data % nx, fg_data % ny))
-            read(unit=input_unit,err=1001,end=1001) fg_data % slab
+            if (file_bulk_read_validated .and. fg_data % nx > 0 .and. fg_data % ny > 0) then
+                nullify(read_slab)
+                allocate(read_slab(fg_data % nx, fg_data % ny))
+                fg_data % slab => read_slab
+                read(unit=input_unit,err=1001,end=1001) read_slab(:,:)
+            else
+                allocate(fg_data % slab(fg_data % nx, fg_data % ny))
+                read(unit=input_unit,err=1001,end=1001) fg_data % slab
+            end if
          end if
       
          istatus = 0
@@ -436,8 +461,15 @@ module read_met_module
             allocate(fg_data % slab(0, 0))
             read(unit=input_unit,err=1001,end=1001)
          else
-            allocate(fg_data % slab(fg_data % nx, fg_data % ny))
-            read(unit=input_unit,err=1001,end=1001) fg_data % slab
+            if (file_bulk_read_validated .and. fg_data % nx > 0 .and. fg_data % ny > 0) then
+                nullify(read_slab)
+                allocate(read_slab(fg_data % nx, fg_data % ny))
+                fg_data % slab => read_slab
+                read(unit=input_unit,err=1001,end=1001) read_slab(:,:)
+            else
+                allocate(fg_data % slab(fg_data % nx, fg_data % ny))
+                read(unit=input_unit,err=1001,end=1001) fg_data % slab
+            end if
          end if
       
          istatus = 0
@@ -467,6 +499,7 @@ module read_met_module
       filename = 'UNINITIALIZED_FILENAME'
       file_payload_sizes_checked = .false.
       file_payload_sizes_validated = .false.
+      file_bulk_read_validated = .false.
   
    end subroutine read_met_close
 

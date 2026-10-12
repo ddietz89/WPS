@@ -15,6 +15,19 @@
 #include <fcntl.h>
 #include <inttypes.h>
 #include "netcdf_precompressed.h"
+#if defined(WPS_ROOT_DOMAIN_REUSE)
+#ifdef __linux__
+#include <sys/syscall.h>
+#endif
+/* Optional output-domain bank gate: no MPI/OpenMP call, including owner OMP=0. */
+int wps_chunk_is_main_thread(void) {
+#ifdef __linux__
+ return syscall(SYS_gettid) == (long)getpid();
+#else
+ return 0;
+#endif
+}
+#endif
 #ifdef WPS_OPENMP_FUNNELED
 #include <sys/syscall.h>
 static int wps_omp_main_thread(void) {

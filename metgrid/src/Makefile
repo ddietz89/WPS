@@ -69,11 +69,29 @@ $(error WPS_METGRID_OPENMP must be unset, 0, or 1)
 endif
 endif
 
+# Qualified provider builds may reuse the root's fully overwritten REAL domain.
+# Set WPS_METGRID_ROOT_DOMAIN_REUSE=0 to restore per-field allocation.
+ifneq ($(strip $(METGRID_PRECOMPRESSED_NETCDF_PREFIX)),)
+WPS_METGRID_ROOT_DOMAIN_REUSE ?= 1
+else
+WPS_METGRID_ROOT_DOMAIN_REUSE ?= 0
+endif
+METGRID_ROOT_DOMAIN_MODE := 0
+ifeq ($(strip $(WPS_METGRID_ROOT_DOMAIN_REUSE)),1)
+ifeq ($(strip $(METGRID_PRECOMPRESSED_NETCDF_PREFIX)),)
+$(error WPS_METGRID_ROOT_DOMAIN_REUSE=1 requires the provider-enabled Metgrid build)
+endif
+METGRID_ROOT_DOMAIN_MODE := 1
+override CPPFLAGS += -DWPS_ROOT_DOMAIN_REUSE
+else ifneq ($(strip $(WPS_METGRID_ROOT_DOMAIN_REUSE)),0)
+$(error WPS_METGRID_ROOT_DOMAIN_REUSE must be 0 or 1)
+endif
+
 # Recompile this small module when switching between normal and provider builds.
 # Recursive WPS make can override flags; the prefix records the selected mode.
 .PHONY: metgrid_backend_mode_force
 .metgrid_backend_mode: metgrid_backend_mode_force
-	@printf '%s\n' '$(METGRID_PRECOMPRESSED_NETCDF_PREFIX)' '$(METGRID_OPENMP_MODE)' > $@.tmp
+	@printf '%s\n' '$(METGRID_PRECOMPRESSED_NETCDF_PREFIX)' '$(METGRID_OPENMP_MODE)' '$(METGRID_ROOT_DOMAIN_MODE)' > $@.tmp
 	@cmp -s $@.tmp $@ || cp $@.tmp $@
 	@rm -f $@.tmp
 # Mode transitions must rebuild every routine that can execute concurrently,

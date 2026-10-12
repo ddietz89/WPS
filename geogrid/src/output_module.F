@@ -10,6 +10,9 @@ module output_module
    use iso_c_binding, only: c_ptr, c_int, c_char, c_null_ptr, c_null_char, c_associated
 #endif
 
+#if defined(WPS_ROOT_DOMAIN_REUSE) && defined(WPS_CHUNK_MPI) && defined(_METGRID) && defined(_MPI) && defined(IO_NETCDF) && !defined(_GEOGRID)
+   use iso_fortran_env, only: domain_i64=>int64, domain_r32=>real32, domain_i32=>int32
+#endif
    use parallel_module
    use gridinfo_module
    use misc_definitions_module
@@ -85,6 +88,22 @@ module output_module
       end function
    end interface
 #endif
+#if defined(WPS_ROOT_DOMAIN_REUSE) && defined(WPS_CHUNK_MPI) && defined(_METGRID) && defined(_MPI) && defined(IO_NETCDF) && !defined(_GEOGRID)
+   real, pointer, contiguous, private :: root_domain_bank(:)=>null(), root_domain_view(:,:,:)=>null()
+   integer(domain_i64), private :: root_domain_capacity=0_domain_i64, root_domain_hits=0_domain_i64
+   integer(domain_i64), private :: root_domain_grows=0_domain_i64
+   integer, private :: root_domain_lower(3)=0, root_domain_upper(3)=0
+   integer, private :: root_domain_dynopt=0
+   logical, private :: root_domain_leased=.false.
+   private :: domain_i64, domain_r32, domain_i32, root_domain_main_thread
+   private :: root_domain_field_eligible, root_domain_acquire, root_domain_release, root_domain_clear
+   private :: root_domain_close_proof
+   interface
+      integer(c_int) function root_domain_main_thread() bind(C,name="wps_chunk_is_main_thread")
+         import c_int
+      end function
+   end interface
+#endif
    contains
  
  
@@ -139,6 +158,9 @@ module output_module
 #if defined(WPS_CHUNK_MPI) && defined(IO_NETCDF) && defined(_MPI) && !defined(_GEOGRID)
       chunk_base_domain=[int(start_dom_1,c_int),int(end_dom_1,c_int), &
                          int(start_dom_2,c_int),int(end_dom_2,c_int)]
+#endif
+#if defined(WPS_ROOT_DOMAIN_REUSE) && defined(WPS_CHUNK_MPI) && defined(_METGRID) && defined(_MPI) && defined(IO_NETCDF) && !defined(_GEOGRID)
+      if (root_domain_main_thread()==1) root_domain_dynopt=dynopt
 #endif
       call init_output_fields(nest_number, grid_type, &
                               start_dom_1, end_dom_1, start_dom_2, end_dom_2, &
@@ -1130,7 +1152,14 @@ module output_module
       integer :: i
       integer :: istatus, comm_1, comm_2, domain_desc
       integer, dimension(3) :: sd, ed, sp, ep, sm, em
+#if defined(WPS_ROOT_DOMAIN_REUSE) && defined(WPS_CHUNK_MPI) && defined(_METGRID) && defined(_MPI) && defined(IO_NETCDF) && !defined(_GEOGRID)
+      real, pointer, contiguous, dimension(:,:,:) :: real_dom_array
+      logical :: domain_cached
+      integer :: cache_ierr
+      integer :: domain_lower(3),domain_upper(3)
+#else
       real, pointer, dimension(:,:,:) :: real_dom_array
+#endif
       logical :: allocated_real_locally
 #if defined(WPS_CHUNK_MPI) && defined(IO_NETCDF) && defined(_MPI) && !defined(_GEOGRID)
       type(c_ptr) :: chunk_session
@@ -1140,6 +1169,9 @@ module output_module
 #endif
   
       allocated_real_locally = .false.
+#if defined(WPS_ROOT_DOMAIN_REUSE) && defined(WPS_CHUNK_MPI) && defined(_METGRID) && defined(_MPI) && defined(IO_NETCDF) && !defined(_GEOGRID)
+      domain_cached=.false.
+#endif
 #if defined(WPS_CHUNK_MPI) && defined(IO_NETCDF) && defined(_MPI) && !defined(_GEOGRID)
       chunk_session = c_null_ptr
       istatus = 0
@@ -1203,8 +1235,17 @@ module output_module
                sm = fields(i)%mem_start
                em = fields(i)%mem_end
      
+#if defined(WPS_ROOT_DOMAIN_REUSE) && defined(WPS_CHUNK_MPI) && defined(_METGRID) && defined(_MPI) && defined(IO_NETCDF) && !defined(_GEOGRID)
+               domain_lower=sd
+               domain_upper=ed
+               if (root_domain_field_eligible(i)) call root_domain_acquire(sd,ed,real_dom_array,domain_cached)
+               if (.not.domain_cached) then
+#endif
                allocate(real_dom_array(sd(1):ed(1),sd(2):ed(2),sd(3):ed(3)))
                allocated_real_locally = .true.
+#if defined(WPS_ROOT_DOMAIN_REUSE) && defined(WPS_CHUNK_MPI) && defined(_METGRID) && defined(_MPI) && defined(IO_NETCDF) && !defined(_GEOGRID)
+               end if
+#endif
                call gather_whole_field_r(real_array, &
                                          sm(1), em(1), sm(2), em(2), sm(3), em(3), &
                                          sp(1), ep(1), sp(2), ep(2), sp(3), ep(3), &
@@ -1282,6 +1323,13 @@ module output_module
                         chunk_status = chunk_done(chunk_session,chunk_scope_status)
                         call chunk_destroy(chunk_session)
                         chunk_session = c_null_ptr
+#if defined(WPS_ROOT_DOMAIN_REUSE) && defined(WPS_CHUNK_MPI) && defined(_METGRID) && defined(_MPI) && defined(IO_NETCDF) && !defined(_GEOGRID)
+                        if (domain_cached) then
+                           call root_domain_release(real_dom_array,domain_lower,domain_upper,cache_ierr)
+                           call mprintf((cache_ierr/=0),ERROR,'Root domain cache release failed')
+                           domain_cached=.false.
+                        end if
+#endif
                         call mprintf(.true.,ERROR,'Compressed output provider registration failed')
                      end if
                   end if
@@ -1305,6 +1353,13 @@ module output_module
                   call ext_gr1_write_field(handle, datestr, trim(fields(i)%fieldname), &
                        real_dom_array, WRF_REAL, comm_1, comm_2, domain_desc, trim(fields(i)%mem_order), &
                        trim(fields(i)%stagger), fields(i)%dimnames, sd, ed, sm, em, sp, ep, istatus)
+               end if
+#endif
+#if defined(WPS_ROOT_DOMAIN_REUSE) && defined(WPS_CHUNK_MPI) && defined(_METGRID) && defined(_MPI) && defined(IO_NETCDF) && !defined(_GEOGRID)
+               if (istatus/=0 .and. domain_cached) then
+                  call root_domain_release(real_dom_array,domain_lower,domain_upper,cache_ierr)
+                  call mprintf((cache_ierr/=0),ERROR,'Root domain cache release failed')
+                  domain_cached=.false.
                end if
 #endif
                call mprintf((istatus /= 0),ERROR,'Error in ext_pkg_write_field')
@@ -1366,6 +1421,13 @@ module output_module
          if (my_proc_id==IO_NODE) chunk_status=chunk_done(chunk_session,int(istatus,c_int))
          call chunk_destroy(chunk_session)
          chunk_session=c_null_ptr
+      end if
+#endif
+#if defined(WPS_ROOT_DOMAIN_REUSE) && defined(WPS_CHUNK_MPI) && defined(_METGRID) && defined(_MPI) && defined(IO_NETCDF) && !defined(_GEOGRID)
+      if (domain_cached) then
+         call root_domain_release(real_dom_array,domain_lower,domain_upper,cache_ierr)
+         call mprintf((cache_ierr/=0),ERROR,'Root domain cache release failed')
+         domain_cached=.false.
       end if
 #endif
       if (allocated_real_locally) deallocate(real_dom_array)
@@ -1775,6 +1837,14 @@ module output_module
   
       ! Local variables
       integer :: istatus
+#if defined(WPS_ROOT_DOMAIN_REUSE) && defined(WPS_CHUNK_MPI) && defined(_METGRID) && defined(_MPI) && defined(IO_NETCDF) && !defined(_GEOGRID)
+      integer :: cache_ierr
+      if (root_domain_main_thread()==1) then
+         call root_domain_close_proof()
+         call root_domain_clear(cache_ierr)
+         call mprintf((cache_ierr/=0),ERROR,'Root domain cache clear failed')
+      end if
+#endif
   
       if (my_proc_id == IO_NODE .or. do_tiled_output) then
   
@@ -1814,4 +1884,132 @@ module output_module
  
    end subroutine output_close
  
+#if defined(WPS_ROOT_DOMAIN_REUSE) && defined(WPS_CHUNK_MPI) && defined(_METGRID) && defined(_MPI) && defined(IO_NETCDF) && !defined(_GEOGRID)
+   logical function root_domain_field_eligible(i) result(ok)
+      implicit none
+      integer, intent(in) :: i
+      integer(domain_i64) :: expected_x, expected_y
+      ok=.false.
+      if (root_domain_main_thread()/=1) return
+      if (kind(0.0)/=domain_r32 .or. kind(0)/=domain_i32) return
+      if (storage_size(0.0)/=32 .or. bit_size(0)/=32) return
+      if (my_proc_id/=IO_NODE .or. nprocs<=1 .or. io_form_output/=NETCDF .or. do_tiled_output) return
+      if (gridtype/='C' .or. root_domain_dynopt/=2) return
+      if (.not.associated(fields)) return
+      if (i<1 .or. i>NUM_FIELDS) return
+      if (fields(i)%ndims/=2 .and. fields(i)%ndims/=3) return
+      if (trim(fields(i)%mem_order)/='XY' .and. trim(fields(i)%mem_order)/='XYZ') return
+      if (fields(i)%sr_x<0 .or. fields(i)%sr_x>1 .or. fields(i)%sr_y<0 .or. fields(i)%sr_y>1) return
+      if (fields(i)%istagger/=M .and. fields(i)%istagger/=U .and. &
+          fields(i)%istagger/=V .and. fields(i)%istagger/=CORNER) return
+      if (any(fields(i)%patch_start<fields(i)%mem_start)) return
+      if (any(fields(i)%patch_end>fields(i)%mem_end)) return
+      if (any(fields(i)%patch_end<fields(i)%patch_start)) return
+      if (fields(i)%patch_start(3)/=fields(i)%dom_start(3)) return
+      if (fields(i)%patch_end(3)/=fields(i)%dom_end(3)) return
+      if (fields(i)%ndims==2) then
+         if (fields(i)%dom_start(3)/=fields(i)%dom_end(3)) return
+      end if
+      if (int(fields(i)%dom_start(1),domain_i64)/=int(chunk_base_domain(1),domain_i64)) return
+      if (int(fields(i)%dom_start(2),domain_i64)/=int(chunk_base_domain(3),domain_i64)) return
+      expected_x=int(chunk_base_domain(2),domain_i64)
+      expected_y=int(chunk_base_domain(4),domain_i64)
+      if (fields(i)%istagger==U .or. fields(i)%istagger==CORNER) expected_x=expected_x+1_domain_i64
+      if (fields(i)%istagger==V .or. fields(i)%istagger==CORNER) expected_y=expected_y+1_domain_i64
+      if (int(fields(i)%dom_end(1),domain_i64)/=expected_x) return
+      if (int(fields(i)%dom_end(2),domain_i64)/=expected_y) return
+      ok=.true.
+   end function root_domain_field_eligible
+
+   subroutine root_domain_acquire(lower,upper,view,used)
+      implicit none
+      integer, intent(in) :: lower(3),upper(3)
+      real, pointer, contiguous, intent(out) :: view(:,:,:)
+      logical, intent(out) :: used
+      integer(domain_i64) :: width(3), words, limit
+      integer :: d, st
+      real, pointer, contiguous :: fresh(:)
+      used=.false.
+      nullify(view,fresh)
+      if (root_domain_main_thread()/=1) return
+      if (my_proc_id/=IO_NODE .or. nprocs<=1 .or. io_form_output/=NETCDF .or. do_tiled_output) return
+      if (kind(0.0)/=domain_r32 .or. kind(0)/=domain_i32) return
+      if (storage_size(0.0)/=32 .or. bit_size(0)/=32) return
+      if (root_domain_leased) return
+      limit=min(67108864_domain_i64,int(huge(0),domain_i64))
+      words=1_domain_i64
+      do d=1,3
+         width(d)=int(upper(d),domain_i64)-int(lower(d),domain_i64)+1_domain_i64
+         if (width(d)<=0_domain_i64) return
+         if (width(d)>limit/words) return
+         words=words*width(d)
+      end do
+      if (words>root_domain_capacity) then
+         allocate(fresh(int(words)),stat=st)
+         if (st/=0) then
+            nullify(fresh)
+            return
+         end if
+         if (associated(root_domain_bank)) deallocate(root_domain_bank)
+         root_domain_bank=>fresh
+         nullify(fresh)
+         root_domain_capacity=words
+         root_domain_grows=root_domain_grows+1_domain_i64
+      end if
+      view(lower(1):upper(1),lower(2):upper(2),lower(3):upper(3))=>root_domain_bank(1:int(words))
+      root_domain_view=>view
+      root_domain_lower=lower
+      root_domain_upper=upper
+      root_domain_leased=.true.
+      root_domain_hits=root_domain_hits+1_domain_i64
+      used=.true.
+   end subroutine root_domain_acquire
+
+   subroutine root_domain_release(view,lower,upper,ierr)
+      implicit none
+      real, pointer, contiguous, intent(inout) :: view(:,:,:)
+      integer, intent(in) :: lower(3),upper(3)
+      integer, intent(out) :: ierr
+      ierr=1
+      if (root_domain_main_thread()/=1) return
+      if (.not.root_domain_leased) return
+      if (.not.associated(view) .or. .not.associated(root_domain_view)) return
+      if (.not.associated(view,root_domain_view)) return
+      if (any(lower/=root_domain_lower) .or. any(upper/=root_domain_upper)) return
+      if (any(lbound(view)/=root_domain_lower) .or. any(ubound(view)/=root_domain_upper)) return
+      nullify(view,root_domain_view)
+      root_domain_leased=.false.
+      ierr=0
+   end subroutine root_domain_release
+
+   subroutine root_domain_clear(ierr)
+      implicit none
+      integer, intent(out) :: ierr
+      ierr=1
+      if (root_domain_main_thread()/=1) return
+      if (root_domain_leased) return
+      if (associated(root_domain_bank)) deallocate(root_domain_bank)
+      nullify(root_domain_bank,root_domain_view)
+      root_domain_capacity=0_domain_i64
+      root_domain_dynopt=0
+      root_domain_lower=0
+      root_domain_upper=0
+      root_domain_hits=0_domain_i64
+      root_domain_grows=0_domain_i64
+      ierr=0
+   end subroutine root_domain_clear
+
+   subroutine root_domain_close_proof()
+      implicit none
+      character(len=8) :: enabled
+      integer :: st
+      if (root_domain_main_thread()/=1) return
+      if (my_proc_id/=IO_NODE) return
+      call get_environment_variable('WPS_ROOT_DOMAIN_REUSE_PROOF',enabled,status=st)
+      if (st==1) return
+      if (len_trim(enabled)==0 .and. st==0) return
+      write(*,'(A,I0,A,I0,A,I0,A,L1)') 'WPS_ROOT_DOMAIN_REUSE hits=',root_domain_hits, &
+         ' grows=',root_domain_grows,' capacity_words=',root_domain_capacity,' leased=',root_domain_leased
+   end subroutine root_domain_close_proof
+#endif
 end module output_module
